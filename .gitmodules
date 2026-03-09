@@ -1,0 +1,3 @@
+[submodule "external/Yeast_closed_loop_DMD_automation"]
+	path = external/Yeast_closed_loop_DMD_automation
+	url = https://github.com/chenmzh/Yeast_closed_loop_DMD_automation.git
