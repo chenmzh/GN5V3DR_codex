@@ -112,7 +112,7 @@ async function handleMessage(context, message) {
   if (message.author.bot) {
     return;
   }
-  if (!isAllowedChannel(context.config, message.channelId)) {
+  if (!isAllowedMessage(context.config, message)) {
     return;
   }
 
@@ -128,6 +128,7 @@ async function handleMessage(context, message) {
       [
         `用法: ${context.config.commandPrefix} <任务描述>`,
         `状态: ${context.config.commandPrefix} status`,
+        `私信自己: ${context.config.commandPrefix} dm <内容>`,
         `帮助: ${context.config.commandPrefix} help`,
       ].join("\n"),
     );
@@ -136,6 +137,12 @@ async function handleMessage(context, message) {
 
   if (remainder === "status") {
     await replyInChunks(message, formatStatus(await listJobs(context.config, 5)));
+    return;
+  }
+
+  const dmContent = parseDirectMessageCommand(remainder);
+  if (dmContent !== null) {
+    await sendDirectMessageToAuthor(context, message, dmContent);
     return;
   }
 
@@ -312,6 +319,13 @@ async function deliverOutboxReply(context, jobId) {
  *   {Promise<object>}: Parsed command text plus nearby server context.
  */
 async function resolveCommandInput(context, message) {
+  if (isDirectMessageChannel(message)) {
+    return {
+      commandText: String(message.content || "").trim() || null,
+      serverContextTurns: [],
+    };
+  }
+
   const serverContextTurns = await readServerContextTurns(context, message);
   const directCommandText = extractDirectCommandText(context, message);
   if (directCommandText !== null) {
@@ -724,6 +738,78 @@ async function replyInChunks(message, text) {
 }
 
 /**
+ * Parse one self-DM command from the bridge command body.
+ *
+ * Input:
+ *   commandText {string}: Command body after the prefix or mention.
+ * Output:
+ *   {string|null}: DM payload text, or null when this is not a DM command.
+ */
+function parseDirectMessageCommand(commandText) {
+  const normalized = String(commandText || "").trim();
+  const lowered = normalized.toLowerCase();
+  const prefixes = ["dm", "私信"];
+  const matchedPrefix = prefixes.find((prefix) => {
+    if (!lowered.startsWith(prefix.toLowerCase())) {
+      return false;
+    }
+
+    if (normalized.length === prefix.length) {
+      return true;
+    }
+
+    const nextChar = normalized[prefix.length];
+    return /\s/u.test(nextChar);
+  });
+
+  if (!matchedPrefix) {
+    return null;
+  }
+
+  if (normalized.length === matchedPrefix.length) {
+    return "";
+  }
+
+  return normalized.slice(matchedPrefix.length + 1).trim();
+}
+
+/**
+ * Send one direct message back to the user who triggered the bridge command.
+ *
+ * Input:
+ *   context {object}: Bridge services and configuration.
+ *   message {import("discord.js").Message}: Trigger Discord message.
+ *   content {string}: DM payload text.
+ * Output:
+ *   {Promise<void>}
+ */
+async function sendDirectMessageToAuthor(context, message, content) {
+  if (!content) {
+    await replyInChunks(
+      message,
+      `用法: ${context.config.commandPrefix} dm <要发到你私信里的内容>`,
+    );
+    return;
+  }
+
+  try {
+    const dmChannel = await message.author.createDM();
+    for (const chunk of chunkText(content)) {
+      await dmChannel.send(chunk);
+    }
+
+    await replyInChunks(
+      message,
+      "已尝试发送私信。如果没收到，请检查你的 Discord 私信设置。",
+    );
+  } catch (error) {
+    throw new Error(
+      `无法发送私信。请确认你允许此服务器成员私信：${error.message}`,
+    );
+  }
+}
+
+/**
  * Decide whether the bot should accept commands from one channel.
  *
  * Input:
@@ -732,11 +818,15 @@ async function replyInChunks(message, text) {
  * Output:
  *   {boolean}: True when the channel is allowed.
  */
-function isAllowedChannel(config, channelId) {
+function isAllowedMessage(config, message) {
+  if (isDirectMessageChannel(message)) {
+    return true;
+  }
+
   if (config.allowedChannelIds.length === 0) {
     return true;
   }
-  return config.allowedChannelIds.includes(channelId);
+  return config.allowedChannelIds.includes(message.channelId);
 }
 
 /**
@@ -844,6 +934,18 @@ function safePositiveInt(value, fallback) {
     return Math.max(0, Number(fallback || 0));
   }
   return Math.floor(normalized);
+}
+
+/**
+ * Check whether one inbound message came from a Discord DM channel.
+ *
+ * Input:
+ *   message {import("discord.js").Message}: Discord message event.
+ * Output:
+ *   {boolean}: True when the message is a DM.
+ */
+function isDirectMessageChannel(message) {
+  return message.guildId === null;
 }
 
 /**

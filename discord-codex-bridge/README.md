@@ -6,8 +6,10 @@ Standalone Discord bridge for talking to local Codex from a Discord server.
 
 - Accepts `!codex ...` commands in Discord
 - Accepts direct bot mentions like `@codex ...`
+- Accepts plain messages in Discord DM without needing `!codex`
 - Can reuse a small same-channel server context window, so follow-up messages
   still work when the `@codex` mention landed in the previous message
+- Can send you a direct message with `!codex dm <content>` or `!codex 私信 <content>`
 - Sends the request to local `codex exec`
 - Replies back in Discord with the Codex result
 - Stores short-term working context per channel or thread
@@ -76,6 +78,22 @@ Status:
 
 ```text
 !codex status
+```
+
+Direct message yourself:
+
+```text
+!codex dm 你好，我在私信里
+```
+
+```text
+!codex 私信 帮我把结果发到私信
+```
+
+Direct chat with the bot:
+
+```text
+你好，帮我看看 D:\codex 最近有什么改动
 ```
 
 Help:
