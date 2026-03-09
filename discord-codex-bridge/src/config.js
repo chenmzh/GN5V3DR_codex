@@ -31,6 +31,10 @@ export function loadConfig(options = {}) {
     discordToken: requireDiscordToken ? requireEnv("DISCORD_BOT_TOKEN") : (process.env.DISCORD_BOT_TOKEN || "").trim(),
     commandPrefix: process.env.DISCORD_COMMAND_PREFIX || "!codex",
     allowedChannelIds: splitCsv(process.env.DISCORD_ALLOWED_CHANNELS || ""),
+    serverContextWindow: Number(process.env.DISCORD_SERVER_CONTEXT_WINDOW || 6),
+    serverContextMaxAgeSec: Number(
+      process.env.DISCORD_SERVER_CONTEXT_MAX_AGE_SEC || 300,
+    ),
     runnerMode: (process.env.RUNNER_MODE || "queue").trim().toLowerCase(),
     workspaceRoot: process.env.WORKSPACE_ROOT || "D:/codex",
     openAiApiKey: process.env.OPENAI_API_KEY || "",

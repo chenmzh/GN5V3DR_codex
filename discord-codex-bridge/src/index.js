@@ -116,12 +116,12 @@ async function handleMessage(context, message) {
     return;
   }
 
-  const commandText = extractCommandText(context, message);
-  if (commandText === null) {
+  const request = await resolveCommandInput(context, message);
+  if (request.commandText === null) {
     return;
   }
 
-  const remainder = commandText.trim();
+  const remainder = request.commandText.trim();
   if (!remainder || remainder === "help") {
     await replyInChunks(
       message,
@@ -193,6 +193,7 @@ async function handleMessage(context, message) {
       conversationScopeId,
       conversationSummary: conversationContext.summary,
       conversationTurns: conversationContext.recentTurns,
+      serverContextTurns: request.serverContextTurns,
       memoryFacts: memoryContext.facts,
       memoryEpisodes: memoryContext.episodes,
     });
@@ -302,6 +303,46 @@ async function deliverOutboxReply(context, jobId) {
 }
 
 /**
+ * Resolve one inbound Discord message into a runnable bridge request.
+ *
+ * Input:
+ *   context {object}: Bridge services and configuration.
+ *   message {import("discord.js").Message}: Discord message event.
+ * Output:
+ *   {Promise<object>}: Parsed command text plus nearby server context.
+ */
+async function resolveCommandInput(context, message) {
+  const serverContextTurns = await readServerContextTurns(context, message);
+  const directCommandText = extractDirectCommandText(context, message);
+  if (directCommandText !== null) {
+    return {
+      commandText: directCommandText,
+      serverContextTurns,
+    };
+  }
+
+  const content = String(message.content || "").trim();
+  if (!content) {
+    return {
+      commandText: null,
+      serverContextTurns: [],
+    };
+  }
+
+  if (isServerContextFollowUp(context, message, serverContextTurns)) {
+    return {
+      commandText: content,
+      serverContextTurns,
+    };
+  }
+
+  return {
+    commandText: null,
+    serverContextTurns: [],
+  };
+}
+
+/**
  * Extract one supported command body from either a prefix or a bot mention.
  *
  * Input:
@@ -311,7 +352,7 @@ async function deliverOutboxReply(context, jobId) {
  *   {string|null}: Command body without the prefix/mention, or null when
  *   the message is not meant for the bot.
  */
-function extractCommandText(context, message) {
+function extractDirectCommandText(context, message) {
   const content = String(message.content || "").trim();
   if (!content) {
     return null;
@@ -341,6 +382,205 @@ function extractCommandText(context, message) {
   }
 
   return null;
+}
+
+/**
+ * Read one bounded slice of nearby server messages for follow-up inference.
+ *
+ * Input:
+ *   context {object}: Bridge services and configuration.
+ *   message {import("discord.js").Message}: Current Discord message event.
+ * Output:
+ *   {Promise<object[]>}: Ordered nearby-message list from the same channel.
+ */
+async function readServerContextTurns(context, message) {
+  const windowSize = safePositiveInt(context.config.serverContextWindow, 0);
+  if (windowSize === 0 || !message.channel?.messages?.fetch) {
+    return [];
+  }
+
+  const collected = new Map();
+  const referenceMessage = await readReferencedMessage(message);
+  if (referenceMessage) {
+    const normalizedReference = normalizeServerContextTurn(
+      context,
+      referenceMessage,
+      true,
+    );
+    if (normalizedReference) {
+      collected.set(normalizedReference.messageId, normalizedReference);
+    }
+  }
+
+  try {
+    const fetchedMessages = await message.channel.messages.fetch({
+      limit: windowSize,
+      before: message.id,
+    });
+    const orderedMessages = [...fetchedMessages.values()].sort(
+      (left, right) => left.createdTimestamp - right.createdTimestamp,
+    );
+
+    for (const priorMessage of orderedMessages) {
+      const normalizedTurn = normalizeServerContextTurn(
+        context,
+        priorMessage,
+        false,
+        message.createdTimestamp,
+      );
+      if (!normalizedTurn || collected.has(normalizedTurn.messageId)) {
+        continue;
+      }
+      collected.set(normalizedTurn.messageId, normalizedTurn);
+    }
+  } catch (error) {
+    console.warn("Failed reading nearby server context:", error.message);
+  }
+
+  return [...collected.values()].sort((left, right) =>
+    String(left.createdAt || "").localeCompare(String(right.createdAt || "")),
+  );
+}
+
+/**
+ * Read the referenced Discord message when the current message is a reply.
+ *
+ * Input:
+ *   message {import("discord.js").Message}: Current Discord message event.
+ * Output:
+ *   {Promise<import("discord.js").Message|null>}: Referenced message or null.
+ */
+async function readReferencedMessage(message) {
+  if (!message.reference?.messageId || !message.fetchReference) {
+    return null;
+  }
+
+  try {
+    return await message.fetchReference();
+  } catch (error) {
+    console.warn("Failed reading reply target:", error.message);
+    return null;
+  }
+}
+
+/**
+ * Normalize one nearby Discord message into a compact prompt-safe context turn.
+ *
+ * Input:
+ *   context {object}: Bridge services and configuration.
+ *   sourceMessage {import("discord.js").Message}: Nearby Discord message.
+ *   fromReference {boolean}: True when loaded through reply-reference lookup.
+ *   currentTimestamp {number}: Timestamp of the live user message.
+ * Output:
+ *   {object|null}: Serializable context turn or null when filtered out.
+ */
+function normalizeServerContextTurn(
+  context,
+  sourceMessage,
+  fromReference,
+  currentTimestamp = Date.now(),
+) {
+  const content = String(sourceMessage?.content || "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!content) {
+    return null;
+  }
+
+  const maxAgeMs = safePositiveInt(context.config.serverContextMaxAgeSec, 0) * 1000;
+  const sourceTimestamp = Number(sourceMessage.createdTimestamp || 0);
+  const ageMs = Math.max(0, Number(currentTimestamp || Date.now()) - sourceTimestamp);
+  if (!fromReference && maxAgeMs > 0 && ageMs > maxAgeMs) {
+    return null;
+  }
+
+  const mentionsBot = extractDirectCommandText(context, sourceMessage) !== null;
+  const botUserId = context.client.user?.id || "";
+  const isBotMessage = sourceMessage.author?.id === botUserId;
+
+  return {
+    messageId: String(sourceMessage.id || ""),
+    authorId: String(sourceMessage.author?.id || ""),
+    authorTag:
+      sourceMessage.author?.tag ||
+      sourceMessage.author?.username ||
+      "unknown",
+    content: content.length > 280 ? `${content.slice(0, 277)}...` : content,
+    createdAt: sourceMessage.createdAt
+      ? sourceMessage.createdAt.toISOString()
+      : new Date(sourceTimestamp || Date.now()).toISOString(),
+    isBotMessage,
+    mentionsBot,
+    fromReference: Boolean(fromReference),
+  };
+}
+
+/**
+ * Decide whether the current message should inherit the nearby server context.
+ *
+ * Input:
+ *   context {object}: Bridge services and configuration.
+ *   message {import("discord.js").Message}: Current Discord message event.
+ *   serverContextTurns {object[]}: Ordered nearby-message context window.
+ * Output:
+ *   {boolean}: True when the message is a follow-up aimed at the bot.
+ */
+function isServerContextFollowUp(context, message, serverContextTurns) {
+  if (!Array.isArray(serverContextTurns) || serverContextTurns.length === 0) {
+    return false;
+  }
+
+  const botUserId = context.client.user?.id || "";
+  const currentAuthorId = String(message.author?.id || "");
+
+  for (let index = serverContextTurns.length - 1; index >= 0; index -= 1) {
+    const anchorTurn = serverContextTurns[index];
+    if (!isServerContextAnchor(anchorTurn)) {
+      continue;
+    }
+    if (!canAnchorApplyToAuthor(anchorTurn, currentAuthorId, botUserId)) {
+      continue;
+    }
+
+    const turnsAfterAnchor = serverContextTurns.slice(index + 1);
+    const isClosedWindow = turnsAfterAnchor.every((turn) => {
+      return turn.authorId === currentAuthorId || turn.authorId === botUserId;
+    });
+    if (isClosedWindow) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Check whether one nearby message is strong enough to anchor bot follow-up.
+ *
+ * Input:
+ *   turn {object}: One normalized nearby server context turn.
+ * Output:
+ *   {boolean}: True when the turn explicitly involved the bot.
+ */
+function isServerContextAnchor(turn) {
+  return Boolean(turn?.isBotMessage || turn?.mentionsBot);
+}
+
+/**
+ * Check whether one anchor message belongs to the same ongoing user-bot thread.
+ *
+ * Input:
+ *   anchorTurn {object}: One normalized nearby server context turn.
+ *   authorId {string}: Current Discord author id.
+ *   botUserId {string}: Current bot user id.
+ * Output:
+ *   {boolean}: True when the anchor can be reused for this author.
+ */
+function canAnchorApplyToAuthor(anchorTurn, authorId, botUserId) {
+  if (anchorTurn.authorId === botUserId) {
+    return true;
+  }
+  return anchorTurn.authorId === authorId;
 }
 
 /**
@@ -587,6 +827,23 @@ function getBotRoleMentions(message) {
   }
 
   return [...roleIds].map((roleId) => `<@&${roleId}>`);
+}
+
+/**
+ * Clamp one possibly invalid integer to a safe positive whole number.
+ *
+ * Input:
+ *   value {number}: Candidate numeric value.
+ *   fallback {number}: Fallback used when the value is invalid.
+ * Output:
+ *   {number}: Non-negative integer.
+ */
+function safePositiveInt(value, fallback) {
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized) || normalized < 0) {
+    return Math.max(0, Number(fallback || 0));
+  }
+  return Math.floor(normalized);
 }
 
 /**

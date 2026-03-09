@@ -26,6 +26,7 @@ export async function runOpenAiMode(context, job) {
   const promptContext = buildPromptContext(job, context.config);
   const summary = String(promptContext.conversationSummary || "").trim();
   const recentTurns = promptContext.recentTurns || [];
+  const nearbyServerContext = formatServerContext(job.serverContextTurns);
   const semanticMemory = promptContext.memoryFacts.map(formatFactLine).join(" ");
   const episodicMemory = promptContext.memoryEpisodes
     .map(formatEpisodeBlock)
@@ -55,6 +56,9 @@ export async function runOpenAiMode(context, job) {
               summary
                 ? `Older conversation summary: ${summary}`
                 : "Older conversation summary: none.",
+              nearbyServerContext
+                ? `Nearby server context: ${nearbyServerContext}`
+                : "Nearby server context: none.",
             ].join(" "),
           },
         ],
@@ -89,4 +93,31 @@ function toOpenAiInput(turn) {
     role,
     content: [{ type: "input_text", text: `${prefix}${turn.content}`.trim() }],
   };
+}
+
+/**
+ * Format nearby same-channel messages into one compact OpenAI input string.
+ *
+ * Input:
+ *   turns {object[]}: Nearby server-context messages collected around the job.
+ * Output:
+ *   {string}: Single-line context block.
+ */
+function formatServerContext(turns) {
+  return (turns || [])
+    .map((turn) => {
+      const flags = [];
+      if (turn.isBotMessage) {
+        flags.push("bot");
+      }
+      if (turn.mentionsBot && !turn.isBotMessage) {
+        flags.push("mention");
+      }
+      if (turn.fromReference) {
+        flags.push("reply-target");
+      }
+      const tag = flags.length > 0 ? ` [${flags.join(", ")}]` : "";
+      return `${turn.authorTag || "unknown"}${tag}: ${String(turn.content || "").trim()}`;
+    })
+    .join(" | ");
 }

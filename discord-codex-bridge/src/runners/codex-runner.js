@@ -73,6 +73,7 @@ function buildCodexPrompt(job, config) {
   const promptContext = buildPromptContext(job, config);
   const summary = String(promptContext.conversationSummary || "").trim();
   const history = promptContext.recentTurns.map(formatTurnLine).join("\n");
+  const serverContext = formatServerContext(job.serverContextTurns);
   const semanticMemory = promptContext.memoryFacts.map(formatFactLine).join("\n");
   const episodicMemory = promptContext.memoryEpisodes
     .map(formatEpisodeBlock)
@@ -98,7 +99,37 @@ function buildCodexPrompt(job, config) {
       ? "Older conversation summary:\n" + summary
       : "Older conversation summary: (none)",
     history ? "Recent conversation:\n" + history : "Recent conversation: (none)",
+    serverContext
+      ? "Nearby server context from the same Discord channel:\n" + serverContext
+      : "Nearby server context: (none)",
     `Latest user request:\n${job.prompt}`,
     "Reply in Chinese unless the user clearly asked for another language.",
   ].join("\n\n");
+}
+
+/**
+ * Format one bounded nearby-channel context block for Codex.
+ *
+ * Input:
+ *   turns {object[]}: Nearby server-context messages collected around the job.
+ * Output:
+ *   {string}: Prompt-safe multi-line context block.
+ */
+function formatServerContext(turns) {
+  return (turns || [])
+    .map((turn) => {
+      const flags = [];
+      if (turn.isBotMessage) {
+        flags.push("bot");
+      }
+      if (turn.mentionsBot && !turn.isBotMessage) {
+        flags.push("mention");
+      }
+      if (turn.fromReference) {
+        flags.push("reply-target");
+      }
+      const tag = flags.length > 0 ? ` [${flags.join(", ")}]` : "";
+      return `- ${turn.authorTag || "unknown"}${tag}: ${String(turn.content || "").trim()}`;
+    })
+    .join("\n");
 }

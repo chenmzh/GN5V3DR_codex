@@ -55,6 +55,9 @@ export async function createJob(config, payload) {
     conversationTurns: Array.isArray(payload.conversationTurns)
       ? payload.conversationTurns
       : [],
+    serverContextTurns: Array.isArray(payload.serverContextTurns)
+      ? payload.serverContextTurns
+      : [],
     memoryFacts: Array.isArray(payload.memoryFacts) ? payload.memoryFacts : [],
     memoryEpisodes: Array.isArray(payload.memoryEpisodes)
       ? payload.memoryEpisodes
@@ -254,6 +257,22 @@ async function writeInboxPrompt(config, job) {
       return parts.join("\n");
     })
     .join("\n");
+  const serverContext = (job.serverContextTurns || [])
+    .map((turn) => {
+      const flags = [];
+      if (turn.isBotMessage) {
+        flags.push("bot");
+      }
+      if (turn.mentionsBot && !turn.isBotMessage) {
+        flags.push("mention");
+      }
+      if (turn.fromReference) {
+        flags.push("reply-target");
+      }
+      const tag = flags.length > 0 ? ` [${flags.join(", ")}]` : "";
+      return `- ${turn.authorTag || "unknown"}${tag}: ${String(turn.content || "").trim()}`;
+    })
+    .join("\n");
   const content = [
     `# Job ${job.id}`,
     "",
@@ -275,6 +294,10 @@ async function writeInboxPrompt(config, job) {
     recentConversation ? "" : null,
     recentConversation || null,
     recentConversation ? "" : null,
+    serverContext ? "## Nearby Server Context" : null,
+    serverContext ? "" : null,
+    serverContext || null,
+    serverContext ? "" : null,
     memoryFacts ? "## Semantic Memory" : null,
     memoryFacts ? "" : null,
     memoryFacts || null,

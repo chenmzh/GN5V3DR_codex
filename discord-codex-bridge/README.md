@@ -6,6 +6,8 @@ Standalone Discord bridge for talking to local Codex from a Discord server.
 
 - Accepts `!codex ...` commands in Discord
 - Accepts direct bot mentions like `@codex ...`
+- Can reuse a small same-channel server context window, so follow-up messages
+  still work when the `@codex` mention landed in the previous message
 - Sends the request to local `codex exec`
 - Replies back in Discord with the Codex result
 - Stores short-term working context per channel or thread
@@ -135,6 +137,8 @@ vendor/codex-runtime/
 - `DISCORD_BOT_TOKEN`
 - `DISCORD_ALLOWED_CHANNELS`
 - `DISCORD_COMMAND_PREFIX`
+- `DISCORD_SERVER_CONTEXT_WINDOW`
+- `DISCORD_SERVER_CONTEXT_MAX_AGE_SEC`
 - `RUNNER_MODE`
 - `WORKSPACE_ROOT`
 - `CHAT_HISTORY_LIMIT`
