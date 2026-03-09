@@ -3,6 +3,12 @@ import path from "node:path";
 import os from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import {
+  buildPromptContext,
+  formatEpisodeBlock,
+  formatFactLine,
+  formatTurnLine,
+} from "../prompt-context.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -36,7 +42,7 @@ export async function runCodexMode(context, job) {
     args.push("--model", context.config.codexModel);
   }
 
-  args.push(buildCodexPrompt(job));
+  args.push(buildCodexPrompt(job, context.config));
 
   try {
     await execFileAsync(cliPath, args, {
@@ -59,34 +65,17 @@ export async function runCodexMode(context, job) {
  *
  * Input:
  *   job {object}: Persisted job with prompt and conversation turns.
+ *   config {object}: Runner configuration with dynamic memory budgets.
  * Output:
  *   {string}: Full natural-language Codex prompt.
  */
-function buildCodexPrompt(job) {
-  const summary = String(job.conversationSummary || "").trim();
-  const history = (job.conversationTurns || [])
-    .map(
-      (turn) =>
-        `[${turn.role}] ${turn.authorTag || "unknown"}: ${turn.content}`,
-    )
-    .join("\n");
-  const semanticMemory = (job.memoryFacts || [])
-    .map(
-      (fact) =>
-        `- [${fact.category || "fact"}] ${String(fact.text || "").trim()}`,
-    )
-    .join("\n");
-  const episodicMemory = (job.memoryEpisodes || [])
-    .map((episode) =>
-      [
-        `- ${String(episode.title || "episode").trim()}`,
-        episode.resultSummary
-          ? `  Result: ${String(episode.resultSummary).trim()}`
-          : null,
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    )
+function buildCodexPrompt(job, config) {
+  const promptContext = buildPromptContext(job, config);
+  const summary = String(promptContext.conversationSummary || "").trim();
+  const history = promptContext.recentTurns.map(formatTurnLine).join("\n");
+  const semanticMemory = promptContext.memoryFacts.map(formatFactLine).join("\n");
+  const episodicMemory = promptContext.memoryEpisodes
+    .map(formatEpisodeBlock)
     .join("\n");
 
   return [
@@ -96,6 +85,8 @@ function buildCodexPrompt(job) {
     "If the user asks for coding work, you may inspect or edit files in the workspace and report what you actually did.",
     "Do not claim to have done work you did not do.",
     "The older summary is a compressed memory of earlier turns. Treat it as background context, not as a verbatim transcript.",
+    `Dynamic memory profile: ${promptContext.profile}.`,
+    `Dynamic memory budget: about ${promptContext.budget} chars.`,
     semanticMemory
       ? "Semantic memory (stable user preferences, rules, and project facts):\n" +
         semanticMemory

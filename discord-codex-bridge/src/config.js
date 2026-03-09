@@ -46,6 +46,9 @@ export function loadConfig(options = {}) {
     memoryPinnedFactLimit: Number(process.env.MEMORY_PINNED_FACT_LIMIT || 4),
     memoryMaxFactsPerTarget: Number(process.env.MEMORY_MAX_FACTS_PER_TARGET || 120),
     memoryMaxEpisodesPerScope: Number(process.env.MEMORY_MAX_EPISODES_PER_SCOPE || 80),
+    promptMemoryCharBudget: Number(process.env.PROMPT_MEMORY_CHAR_BUDGET || 2800),
+    promptMemoryMinCharBudget: Number(process.env.PROMPT_MEMORY_MIN_CHAR_BUDGET || 500),
+    promptMemoryMaxCharBudget: Number(process.env.PROMPT_MEMORY_MAX_CHAR_BUDGET || 4200),
     codexCliPath:
       process.env.CODEX_CLI_PATH ||
       path.join(rootDir, "vendor", "codex-runtime", "codex.exe"),

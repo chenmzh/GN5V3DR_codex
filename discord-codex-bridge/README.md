@@ -12,6 +12,7 @@ Standalone Discord bridge for talking to local Codex from a Discord server.
 - Rolls older conversation into a compact long-term summary
 - Stores semantic memory for stable rules, preferences, and project facts
 - Stores episodic memory for important completed tasks
+- Dynamically shrinks or expands injected memory based on request complexity
 - Keeps local job history on disk
 - Shows stage reactions and presence while the bot is working
 
@@ -87,6 +88,7 @@ Help:
 - Compressed conversation memory: rolling summary of older turns
 - Semantic memory: stable user rules, preferences, and project facts
 - Episodic memory: important past tasks and their outcomes
+- Dynamic prompt budget: small talk gets a tiny memory slice, coding tasks get a larger one
 
 ## Discord Status Signals
 
@@ -145,6 +147,9 @@ vendor/codex-runtime/
 - `MEMORY_PINNED_FACT_LIMIT`
 - `MEMORY_MAX_FACTS_PER_TARGET`
 - `MEMORY_MAX_EPISODES_PER_SCOPE`
+- `PROMPT_MEMORY_CHAR_BUDGET`
+- `PROMPT_MEMORY_MIN_CHAR_BUDGET`
+- `PROMPT_MEMORY_MAX_CHAR_BUDGET`
 - `CODEX_CLI_PATH`
 - `CODEX_MODEL`
 - `CODEX_TIMEOUT_MS`
