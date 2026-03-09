@@ -1,4 +1,5 @@
 import {
+  ActivityType,
   Client,
   Events,
   GatewayIntentBits,
@@ -47,10 +48,15 @@ async function main() {
     partials: [Partials.Channel],
   });
 
-  const context = { client, config };
+  const context = {
+    client,
+    config,
+    activeJobs: 0,
+  };
 
   client.once(Events.ClientReady, (readyClient) => {
     console.log(`Discord bridge logged in as ${readyClient.user.tag}`);
+    syncPresence(context, "ready");
     startOutboxPoller(context);
   });
 
@@ -59,7 +65,10 @@ async function main() {
   });
 
   client.on(Events.ShardResume, (replayedEvents, shardId) => {
-    console.log(`Discord shard ${shardId} resumed after replaying ${replayedEvents} events.`);
+    console.log(
+      `Discord shard ${shardId} resumed after replaying ${replayedEvents} events.`,
+    );
+    syncPresence(context, context.activeJobs > 0 ? "thinking" : "ready");
   });
 
   client.on(Events.Error, (error) => {
@@ -124,6 +133,8 @@ async function handleMessage(context, message) {
   }
 
   await setMessageState(message, "thinking");
+  context.activeJobs += 1;
+  syncPresence(context, "thinking");
   const keepAlive = startThinkingHeartbeat(message);
 
   try {
@@ -181,6 +192,8 @@ async function handleMessage(context, message) {
     throw error;
   } finally {
     stopThinkingHeartbeat(keepAlive);
+    context.activeJobs = Math.max(0, context.activeJobs - 1);
+    syncPresence(context, context.activeJobs > 0 ? "thinking" : "ready");
   }
 }
 
@@ -222,7 +235,9 @@ function startOutboxPoller(context) {
 async function deliverOutboxReply(context, jobId) {
   const job = await readJob(context.config, jobId);
   if (!isSnowflake(job.source.channelId)) {
-    throw new Error(`Invalid Discord channel id for job ${jobId}: ${job.source.channelId}`);
+    throw new Error(
+      `Invalid Discord channel id for job ${jobId}: ${job.source.channelId}`,
+    );
   }
   const channel = await context.client.channels.fetch(job.source.channelId);
   if (!channel || !channel.isTextBased()) {
@@ -273,20 +288,14 @@ function extractCommandText(context, message) {
   const mentionForms = [`<@${botId}>`, `<@!${botId}>`];
   for (const mention of mentionForms) {
     if (content.includes(mention)) {
-      return content
-        .replace(mention, " ")
-        .replace(/\s+/gu, " ")
-        .trim();
+      return content.replace(mention, " ").replace(/\s+/gu, " ").trim();
     }
   }
 
   const botRoleMentions = getBotRoleMentions(message);
   for (const mention of botRoleMentions) {
     if (content.includes(mention)) {
-      return content
-        .replace(mention, " ")
-        .replace(/\s+/gu, " ")
-        .trim();
+      return content.replace(mention, " ").replace(/\s+/gu, " ").trim();
     }
   }
 
@@ -316,7 +325,8 @@ function startThinkingHeartbeat(message) {
  * Stop one active typing heartbeat interval.
  *
  * Input:
- *   timer {NodeJS.Timeout|null}: Interval handle returned by startThinkingHeartbeat.
+ *   timer {NodeJS.Timeout|null}: Interval handle returned by
+ *   startThinkingHeartbeat.
  * Output:
  *   {void}
  */
@@ -343,7 +353,8 @@ async function safeSendTyping(message) {
 }
 
 /**
- * Reflect current processing state back onto the trigger message with reactions.
+ * Reflect current processing state back onto the trigger message with
+ * reactions.
  *
  * Input:
  *   message {import("discord.js").Message}: Trigger message.
@@ -495,7 +506,10 @@ async function markOutboxJobFailed(context, jobId, error) {
       resultSummary: String(error.message || error).slice(0, 500),
     });
   } catch (updateError) {
-    console.error(`Failed updating job ${jobId} after outbox error:`, updateError);
+    console.error(
+      `Failed updating job ${jobId} after outbox error:`,
+      updateError,
+    );
   }
 }
 
@@ -520,7 +534,9 @@ function isSnowflake(value) {
  *   {string}: Thread id when available, otherwise channel id.
  */
 function getConversationScopeId(message) {
-  return String(message.channel?.isThread?.() ? message.channel.id : message.channelId);
+  return String(
+    message.channel?.isThread?.() ? message.channel.id : message.channelId,
+  );
 }
 
 /**
@@ -538,6 +554,38 @@ function getBotRoleMentions(message) {
   }
 
   return [...roleIds].map((roleId) => `<@&${roleId}>`);
+}
+
+/**
+ * Push one high-level bridge status into the bot's Discord presence.
+ *
+ * Input:
+ *   context {object}: Bridge services, client, and job counters.
+ *   state {"ready"|"thinking"}: Desired bridge presence.
+ * Output:
+ *   {void}
+ */
+function syncPresence(context, state) {
+  const user = context.client.user;
+  if (!user) {
+    return;
+  }
+
+  const activityName =
+    state === "thinking"
+      ? `🤔 Working on ${context.activeJobs} task(s)`
+      : "🟢 Ready for @codex";
+  const presenceStatus = state === "thinking" ? "idle" : "online";
+
+  user.setPresence({
+    status: presenceStatus,
+    activities: [
+      {
+        name: activityName,
+        type: ActivityType.Custom,
+      },
+    ],
+  });
 }
 
 main().catch((error) => {
