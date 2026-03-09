@@ -1,36 +1,33 @@
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$setupScript = Join-Path $PSScriptRoot 'setup-codex-runtime.ps1'
 $logDir = Join-Path $projectRoot 'bridge-data\logs'
-$pidPath = Join-Path $logDir 'bridge.pid'
-$stdoutPath = Join-Path $logDir 'bridge.stdout.log'
-$stderrPath = Join-Path $logDir 'bridge.stderr.log'
+$supervisorPidPath = Join-Path $logDir 'bridge.pid'
+$supervisorScript = Join-Path $PSScriptRoot 'supervise-bridge.ps1'
 
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 
-if (Test-Path $pidPath) {
-    $existingPid = Get-Content $pidPath -ErrorAction SilentlyContinue
+if (Test-Path $supervisorPidPath) {
+    $existingPid = Get-Content $supervisorPidPath -ErrorAction SilentlyContinue
     if ($existingPid) {
         $running = Get-Process -Id $existingPid -ErrorAction SilentlyContinue
         if ($running) {
-            Write-Output "Bridge is already running with PID $existingPid."
+            Write-Output "Bridge supervisor is already running with PID $existingPid."
             exit 0
         }
     }
 }
 
-& $setupScript
-
-$process = Start-Process `
-    -FilePath 'node.exe' `
-    -ArgumentList 'src/index.js' `
+$supervisor = Start-Process `
+    -FilePath 'powershell.exe' `
+    -ArgumentList @(
+        '-ExecutionPolicy', 'Bypass',
+        '-File', "`"$supervisorScript`""
+    ) `
     -WorkingDirectory $projectRoot `
-    -RedirectStandardOutput $stdoutPath `
-    -RedirectStandardError $stderrPath `
+    -WindowStyle Hidden `
     -PassThru
 
-Set-Content -Path $pidPath -Value $process.Id
-Write-Output "Bridge started with PID $($process.Id)."
-Write-Output "Stdout: $stdoutPath"
-Write-Output "Stderr: $stderrPath"
+Set-Content -Path $supervisorPidPath -Value $supervisor.Id
+Start-Sleep -Seconds 2
+Write-Output "Bridge launcher started supervisor PID $($supervisor.Id)."

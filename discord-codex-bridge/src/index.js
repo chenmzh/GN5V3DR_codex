@@ -21,6 +21,10 @@ import {
 } from "./job-store.js";
 import { runJob } from "./runners/index.js";
 
+const REACTION_THINKING = "🤔";
+const REACTION_SUCCESS = "✅";
+const REACTION_ERROR = "❌";
+
 /**
  * Start the Discord bridge bot and the outbox polling loop.
  *
@@ -50,12 +54,25 @@ async function main() {
     startOutboxPoller(context);
   });
 
+  client.on(Events.ShardDisconnect, (closeEvent, shardId) => {
+    console.warn(`Discord shard ${shardId} disconnected: ${closeEvent.code}`);
+  });
+
+  client.on(Events.ShardResume, (replayedEvents, shardId) => {
+    console.log(`Discord shard ${shardId} resumed after replaying ${replayedEvents} events.`);
+  });
+
+  client.on(Events.Error, (error) => {
+    console.error("Discord client error:", error);
+  });
+
   client.on(Events.MessageCreate, async (message) => {
     try {
       await handleMessage(context, message);
     } catch (error) {
       console.error(error);
       if (!message.author.bot) {
+        await setMessageState(message, "error");
         await message.reply(`Bridge error: ${error.message}`);
       }
     }
@@ -106,52 +123,64 @@ async function handleMessage(context, message) {
     return;
   }
 
-  const conversationScopeId = getConversationScopeId(message);
-  const recentConversation = await readRecentConversation(
-    context.config,
-    conversationScopeId,
-    context.config.chatHistoryLimit,
-  );
+  await setMessageState(message, "thinking");
+  const keepAlive = startThinkingHeartbeat(message);
 
-  const job = await createJob(context.config, {
-    prompt: remainder,
-    channelId: message.channelId,
-    guildId: message.guildId,
-    authorId: message.author.id,
-    authorTag: message.author.tag,
-    messageId: message.id,
-    messageUrl: message.url,
-    workspaceRoot: context.config.workspaceRoot,
-    runnerMode: context.config.runnerMode,
-    conversationScopeId,
-    conversationTurns: recentConversation,
-  });
+  try {
+    const conversationScopeId = getConversationScopeId(message);
+    const recentConversation = await readRecentConversation(
+      context.config,
+      conversationScopeId,
+      context.config.chatHistoryLimit,
+    );
 
-  await appendConversationTurn(context.config, conversationScopeId, {
-    role: "user",
-    authorTag: message.author.tag,
-    content: remainder,
-    createdAt: new Date().toISOString(),
-    messageId: message.id,
-  });
+    const job = await createJob(context.config, {
+      prompt: remainder,
+      channelId: message.channelId,
+      guildId: message.guildId,
+      authorId: message.author.id,
+      authorTag: message.author.tag,
+      messageId: message.id,
+      messageUrl: message.url,
+      workspaceRoot: context.config.workspaceRoot,
+      runnerMode: context.config.runnerMode,
+      conversationScopeId,
+      conversationTurns: recentConversation,
+    });
 
-  await updateJob(context.config, job.id, { status: "running" });
-  const result = await runJob(context, job);
-  const finalJob = await updateJob(context.config, job.id, {
-    status: result.status,
-    resultSummary: result.reply.slice(0, 500),
-  });
+    await appendConversationTurn(context.config, conversationScopeId, {
+      role: "user",
+      authorTag: message.author.tag,
+      content: remainder,
+      createdAt: new Date().toISOString(),
+      messageId: message.id,
+    });
 
-  await replyInChunks(message, result.reply);
-  await appendConversationTurn(context.config, conversationScopeId, {
-    role: "assistant",
-    authorTag: context.client.user?.tag || "codex",
-    content: result.reply,
-    createdAt: new Date().toISOString(),
-  });
+    await updateJob(context.config, job.id, { status: "running" });
+    const result = await runJob(context, job);
+    const finalJob = await updateJob(context.config, job.id, {
+      status: result.status,
+      resultSummary: result.reply.slice(0, 500),
+    });
 
-  if (finalJob.status === "queued") {
-    return;
+    await replyInChunks(message, result.reply);
+    await appendConversationTurn(context.config, conversationScopeId, {
+      role: "assistant",
+      authorTag: context.client.user?.tag || "codex",
+      content: result.reply,
+      createdAt: new Date().toISOString(),
+    });
+
+    await setMessageState(message, "success");
+
+    if (finalJob.status === "queued") {
+      return;
+    }
+  } catch (error) {
+    await setMessageState(message, "error");
+    throw error;
+  } finally {
+    stopThinkingHeartbeat(keepAlive);
   }
 }
 
@@ -251,7 +280,7 @@ function extractCommandText(context, message) {
     }
   }
 
-  const botRoleMentions = getBotRoleMentions(context, message);
+  const botRoleMentions = getBotRoleMentions(message);
   for (const mention of botRoleMentions) {
     if (content.includes(mention)) {
       return content
@@ -262,6 +291,132 @@ function extractCommandText(context, message) {
   }
 
   return null;
+}
+
+/**
+ * Keep Discord typing status alive while the bot is working.
+ *
+ * Input:
+ *   message {import("discord.js").Message}: Trigger message.
+ * Output:
+ *   {NodeJS.Timeout|null}: Interval handle used to refresh typing state.
+ */
+function startThinkingHeartbeat(message) {
+  if (!message.channel?.sendTyping) {
+    return null;
+  }
+
+  void safeSendTyping(message);
+  return setInterval(() => {
+    void safeSendTyping(message);
+  }, 8000);
+}
+
+/**
+ * Stop one active typing heartbeat interval.
+ *
+ * Input:
+ *   timer {NodeJS.Timeout|null}: Interval handle returned by startThinkingHeartbeat.
+ * Output:
+ *   {void}
+ */
+function stopThinkingHeartbeat(timer) {
+  if (timer) {
+    clearInterval(timer);
+  }
+}
+
+/**
+ * Send one best-effort Discord typing signal.
+ *
+ * Input:
+ *   message {import("discord.js").Message}: Trigger message.
+ * Output:
+ *   {Promise<void>}
+ */
+async function safeSendTyping(message) {
+  try {
+    await message.channel.sendTyping();
+  } catch (error) {
+    console.warn("Failed to send typing indicator:", error.message);
+  }
+}
+
+/**
+ * Reflect current processing state back onto the trigger message with reactions.
+ *
+ * Input:
+ *   message {import("discord.js").Message}: Trigger message.
+ *   state {"thinking"|"success"|"error"}: Desired message state.
+ * Output:
+ *   {Promise<void>}
+ */
+async function setMessageState(message, state) {
+  try {
+    switch (state) {
+      case "thinking":
+        await ensureReaction(message, REACTION_THINKING);
+        await removeReaction(message, REACTION_SUCCESS);
+        await removeReaction(message, REACTION_ERROR);
+        break;
+      case "success":
+        await removeReaction(message, REACTION_THINKING);
+        await ensureReaction(message, REACTION_SUCCESS);
+        await removeReaction(message, REACTION_ERROR);
+        break;
+      case "error":
+        await removeReaction(message, REACTION_THINKING);
+        await ensureReaction(message, REACTION_ERROR);
+        break;
+      default:
+        break;
+    }
+  } catch (error) {
+    console.warn("Failed updating message reactions:", error.message);
+  }
+}
+
+/**
+ * Ensure one reaction exists on a Discord message.
+ *
+ * Input:
+ *   message {import("discord.js").Message}: Target message.
+ *   emoji {string}: Emoji to add.
+ * Output:
+ *   {Promise<void>}
+ */
+async function ensureReaction(message, emoji) {
+  const hasReaction = message.reactions.cache.some(
+    (reaction) => reaction.emoji.name === emoji,
+  );
+  if (!hasReaction) {
+    await message.react(emoji);
+  }
+}
+
+/**
+ * Remove the bot's own reaction from a Discord message when present.
+ *
+ * Input:
+ *   message {import("discord.js").Message}: Target message.
+ *   emoji {string}: Emoji to remove.
+ * Output:
+ *   {Promise<void>}
+ */
+async function removeReaction(message, emoji) {
+  const reaction = message.reactions.cache.find(
+    (entry) => entry.emoji.name === emoji,
+  );
+  if (!reaction) {
+    return;
+  }
+
+  const userId = message.client.user?.id;
+  if (!userId) {
+    return;
+  }
+
+  await reaction.users.remove(userId);
 }
 
 /**
@@ -372,12 +527,11 @@ function getConversationScopeId(message) {
  * Build all role-mention strings that belong to the bot in this guild.
  *
  * Input:
- *   context {object}: Bridge services and configuration.
  *   message {import("discord.js").Message}: Discord message event.
  * Output:
  *   {string[]}: Role mention strings such as <@&123>.
  */
-function getBotRoleMentions(context, message) {
+function getBotRoleMentions(message) {
   const roleIds = message.guild?.members?.me?.roles?.cache?.keys?.();
   if (!roleIds) {
     return [];
