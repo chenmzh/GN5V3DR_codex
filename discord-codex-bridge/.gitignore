@@ -1,0 +1,11 @@
+node_modules/
+.env
+
+bridge-data/**
+!bridge-data/
+!bridge-data/inbox/
+!bridge-data/outbox/
+!bridge-data/archive/
+!bridge-data/jobs/
+!bridge-data/logs/
+!bridge-data/**/.gitkeep

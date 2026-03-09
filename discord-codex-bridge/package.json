@@ -1,0 +1,19 @@
+{
+  "name": "discord-codex-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Discord to Codex/OpenAI bridge with a queue-first runner.",
+  "scripts": {
+    "start": "node src/index.js",
+    "reply": "node src/manual-reply.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "discord.js": "^14.19.3",
+    "dotenv": "^16.4.7",
+    "openai": "^6.27.0"
+  }
+}
