@@ -20,6 +20,17 @@ export async function runOpenAiMode(context, job) {
   const client = new OpenAI({ apiKey: context.config.openAiApiKey });
   const summary = String(job.conversationSummary || "").trim();
   const recentTurns = job.conversationTurns || [];
+  const semanticMemory = (job.memoryFacts || [])
+    .map((fact) => `[${fact.category || "fact"}] ${String(fact.text || "").trim()}`)
+    .join(" ");
+  const episodicMemory = (job.memoryEpisodes || [])
+    .map((episode) => {
+      const title = String(episode.title || "").trim();
+      const result = String(episode.resultSummary || "").trim();
+      return result ? `${title} Result: ${result}` : title;
+    })
+    .filter(Boolean)
+    .join(" ");
   const response = await client.responses.create({
     model: context.config.openAiModel,
     input: [
@@ -34,6 +45,12 @@ export async function runOpenAiMode(context, job) {
               "You are speaking in an ongoing Discord conversation.",
               "Answer clearly and concisely.",
               "Do not claim that you changed files unless you actually had a local execution layer.",
+              semanticMemory
+                ? `Semantic memory: ${semanticMemory}`
+                : "Semantic memory: none.",
+              episodicMemory
+                ? `Episodic memory: ${episodicMemory}`
+                : "Episodic memory: none.",
               summary
                 ? `Older conversation summary: ${summary}`
                 : "Older conversation summary: none.",

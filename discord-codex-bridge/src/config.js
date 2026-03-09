@@ -20,6 +20,9 @@ export function loadConfig(options = {}) {
   return {
     rootDir,
     dataDir,
+    memoryDir: path.join(dataDir, "memory"),
+    memoryUsersDir: path.join(dataDir, "memory", "users"),
+    memoryScopesDir: path.join(dataDir, "memory", "scopes"),
     inboxDir: path.join(dataDir, "inbox"),
     outboxDir: path.join(dataDir, "outbox"),
     archiveDir: path.join(dataDir, "archive"),
@@ -38,6 +41,11 @@ export function loadConfig(options = {}) {
     chatTranscriptMaxTurns: Number(process.env.CHAT_TRANSCRIPT_MAX_TURNS || 24),
     chatArchiveBatchSize: Number(process.env.CHAT_ARCHIVE_BATCH_SIZE || 6),
     chatTurnCharLimit: Number(process.env.CHAT_TURN_CHAR_LIMIT || 4000),
+    memoryFactRecallLimit: Number(process.env.MEMORY_FACT_RECALL_LIMIT || 6),
+    memoryEpisodeRecallLimit: Number(process.env.MEMORY_EPISODE_RECALL_LIMIT || 4),
+    memoryPinnedFactLimit: Number(process.env.MEMORY_PINNED_FACT_LIMIT || 4),
+    memoryMaxFactsPerTarget: Number(process.env.MEMORY_MAX_FACTS_PER_TARGET || 120),
+    memoryMaxEpisodesPerScope: Number(process.env.MEMORY_MAX_EPISODES_PER_SCOPE || 80),
     codexCliPath:
       process.env.CODEX_CLI_PATH ||
       path.join(rootDir, "vendor", "codex-runtime", "codex.exe"),

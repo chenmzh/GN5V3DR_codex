@@ -12,6 +12,9 @@ import crypto from "node:crypto";
  */
 export async function ensureStore(config) {
   await Promise.all([
+    fs.mkdir(config.memoryDir, { recursive: true }),
+    fs.mkdir(config.memoryUsersDir, { recursive: true }),
+    fs.mkdir(config.memoryScopesDir, { recursive: true }),
     fs.mkdir(config.inboxDir, { recursive: true }),
     fs.mkdir(config.outboxDir, { recursive: true }),
     fs.mkdir(config.archiveDir, { recursive: true }),
@@ -51,6 +54,10 @@ export async function createJob(config, payload) {
     conversationSummary: String(payload.conversationSummary || ""),
     conversationTurns: Array.isArray(payload.conversationTurns)
       ? payload.conversationTurns
+      : [],
+    memoryFacts: Array.isArray(payload.memoryFacts) ? payload.memoryFacts : [],
+    memoryEpisodes: Array.isArray(payload.memoryEpisodes)
+      ? payload.memoryEpisodes
       : [],
     resultSummary: "",
   };
@@ -232,6 +239,21 @@ async function writeInboxPrompt(config, job) {
           .trim()}`,
     )
     .join("\n");
+  const memoryFacts = (job.memoryFacts || [])
+    .map(
+      (fact) =>
+        `- [${fact.category || "fact"}] ${String(fact.text || "").trim()}`,
+    )
+    .join("\n");
+  const memoryEpisodes = (job.memoryEpisodes || [])
+    .map((episode) => {
+      const parts = [
+        `- ${String(episode.title || "episode").trim()}`,
+        episode.resultSummary ? `  Result: ${String(episode.resultSummary).trim()}` : null,
+      ].filter(Boolean);
+      return parts.join("\n");
+    })
+    .join("\n");
   const content = [
     `# Job ${job.id}`,
     "",
@@ -253,6 +275,14 @@ async function writeInboxPrompt(config, job) {
     recentConversation ? "" : null,
     recentConversation || null,
     recentConversation ? "" : null,
+    memoryFacts ? "## Semantic Memory" : null,
+    memoryFacts ? "" : null,
+    memoryFacts || null,
+    memoryFacts ? "" : null,
+    memoryEpisodes ? "## Episodic Memory" : null,
+    memoryEpisodes ? "" : null,
+    memoryEpisodes || null,
+    memoryEpisodes ? "" : null,
     "## Prompt",
     "",
     job.prompt,

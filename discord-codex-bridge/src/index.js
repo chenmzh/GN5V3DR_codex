@@ -12,6 +12,11 @@ import {
   readConversationContext,
 } from "./conversation-store.js";
 import {
+  readRelevantMemories,
+  rememberCompletedTask,
+  updateMemoriesFromUserTurn,
+} from "./memory-store.js";
+import {
   consumeOutboxReply,
   createJob,
   ensureStore,
@@ -130,8 +135,7 @@ async function handleMessage(context, message) {
   }
 
   if (remainder === "status") {
-    const jobs = await listJobs(context.config, 5);
-    await replyInChunks(message, formatStatus(jobs));
+    await replyInChunks(message, formatStatus(await listJobs(context.config, 5)));
     return;
   }
 
@@ -142,8 +146,10 @@ async function handleMessage(context, message) {
 
   try {
     const conversationScopeId = getConversationScopeId(message);
+    const createdAt = new Date().toISOString();
 
     await setMessageState(message, "context");
+
     const conversationContext = await readConversationContext(
       context.config,
       conversationScopeId,
@@ -155,8 +161,23 @@ async function handleMessage(context, message) {
       role: "user",
       authorTag: message.author.tag,
       content: remainder,
-      createdAt: new Date().toISOString(),
+      createdAt,
       messageId: message.id,
+    });
+
+    await updateMemoriesFromUserTurn(context.config, {
+      scopeId: conversationScopeId,
+      authorId: message.author.id,
+      authorTag: message.author.tag,
+      content: remainder,
+      createdAt,
+      messageId: message.id,
+    });
+
+    const memoryContext = await readRelevantMemories(context.config, {
+      scopeId: conversationScopeId,
+      authorId: message.author.id,
+      query: remainder,
     });
 
     const job = await createJob(context.config, {
@@ -172,6 +193,8 @@ async function handleMessage(context, message) {
       conversationScopeId,
       conversationSummary: conversationContext.summary,
       conversationTurns: conversationContext.recentTurns,
+      memoryFacts: memoryContext.facts,
+      memoryEpisodes: memoryContext.episodes,
     });
 
     await updateJob(context.config, job.id, { status: "running" });
@@ -190,6 +213,14 @@ async function handleMessage(context, message) {
       authorTag: context.client.user?.tag || "codex",
       content: result.reply,
       createdAt: new Date().toISOString(),
+    });
+
+    await rememberCompletedTask(context.config, {
+      scopeId: conversationScopeId,
+      prompt: remainder,
+      resultSummary: result.reply.slice(0, 500),
+      createdAt: new Date().toISOString(),
+      authorTag: message.author.tag,
     });
 
     await setMessageState(message, "success");

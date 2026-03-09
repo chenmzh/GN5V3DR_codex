@@ -8,8 +8,10 @@ Standalone Discord bridge for talking to local Codex from a Discord server.
 - Accepts direct bot mentions like `@codex ...`
 - Sends the request to local `codex exec`
 - Replies back in Discord with the Codex result
-- Stores recent conversation context per channel or thread
-- Rolls older context into a compact long-term summary
+- Stores short-term working context per channel or thread
+- Rolls older conversation into a compact long-term summary
+- Stores semantic memory for stable rules, preferences, and project facts
+- Stores episodic memory for important completed tasks
 - Keeps local job history on disk
 - Shows stage reactions and presence while the bot is working
 
@@ -23,6 +25,7 @@ discord-codex-bridge/
     inbox/
     jobs/
     logs/
+    memory/
     outbox/
   scripts/
     setup-codex-runtime.ps1
@@ -78,10 +81,17 @@ Help:
 !codex help
 ```
 
+## Memory Layers
+
+- Working memory: recent turns plus the current request
+- Compressed conversation memory: rolling summary of older turns
+- Semantic memory: stable user rules, preferences, and project facts
+- Episodic memory: important past tasks and their outcomes
+
 ## Discord Status Signals
 
 - `👀`: command received
-- `🧠`: loading or compacting conversation context
+- `🧠`: loading or compacting context and memory
 - `🤔`: Codex is actively working
 - `✅`: request completed
 - `❌`: request failed
@@ -130,6 +140,11 @@ vendor/codex-runtime/
 - `CHAT_TRANSCRIPT_MAX_TURNS`
 - `CHAT_ARCHIVE_BATCH_SIZE`
 - `CHAT_TURN_CHAR_LIMIT`
+- `MEMORY_FACT_RECALL_LIMIT`
+- `MEMORY_EPISODE_RECALL_LIMIT`
+- `MEMORY_PINNED_FACT_LIMIT`
+- `MEMORY_MAX_FACTS_PER_TARGET`
+- `MEMORY_MAX_EPISODES_PER_SCOPE`
 - `CODEX_CLI_PATH`
 - `CODEX_MODEL`
 - `CODEX_TIMEOUT_MS`

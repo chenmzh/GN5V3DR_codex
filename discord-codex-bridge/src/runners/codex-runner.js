@@ -70,6 +70,24 @@ function buildCodexPrompt(job) {
         `[${turn.role}] ${turn.authorTag || "unknown"}: ${turn.content}`,
     )
     .join("\n");
+  const semanticMemory = (job.memoryFacts || [])
+    .map(
+      (fact) =>
+        `- [${fact.category || "fact"}] ${String(fact.text || "").trim()}`,
+    )
+    .join("\n");
+  const episodicMemory = (job.memoryEpisodes || [])
+    .map((episode) =>
+      [
+        `- ${String(episode.title || "episode").trim()}`,
+        episode.resultSummary
+          ? `  Result: ${String(episode.resultSummary).trim()}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    )
+    .join("\n");
 
   return [
     "You are Codex replying inside a Discord conversation.",
@@ -78,6 +96,13 @@ function buildCodexPrompt(job) {
     "If the user asks for coding work, you may inspect or edit files in the workspace and report what you actually did.",
     "Do not claim to have done work you did not do.",
     "The older summary is a compressed memory of earlier turns. Treat it as background context, not as a verbatim transcript.",
+    semanticMemory
+      ? "Semantic memory (stable user preferences, rules, and project facts):\n" +
+        semanticMemory
+      : "Semantic memory: (none)",
+    episodicMemory
+      ? "Episodic memory (relevant past tasks and outcomes):\n" + episodicMemory
+      : "Episodic memory: (none)",
     summary
       ? "Older conversation summary:\n" + summary
       : "Older conversation summary: (none)",
