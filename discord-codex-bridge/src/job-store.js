@@ -16,6 +16,7 @@ export async function ensureStore(config) {
     fs.mkdir(config.outboxDir, { recursive: true }),
     fs.mkdir(config.archiveDir, { recursive: true }),
     fs.mkdir(config.jobsDir, { recursive: true }),
+    fs.mkdir(config.conversationsDir, { recursive: true }),
   ]);
 }
 

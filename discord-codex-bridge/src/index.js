@@ -7,6 +7,10 @@ import {
 import { loadConfig } from "./config.js";
 import { chunkText } from "./chunk-text.js";
 import {
+  appendConversationTurn,
+  readRecentConversation,
+} from "./conversation-store.js";
+import {
   consumeOutboxReply,
   createJob,
   ensureStore,
@@ -77,12 +81,12 @@ async function handleMessage(context, message) {
     return;
   }
 
-  const content = String(message.content || "").trim();
-  if (!content.startsWith(context.config.commandPrefix)) {
+  const commandText = extractCommandText(context, message);
+  if (commandText === null) {
     return;
   }
 
-  const remainder = content.slice(context.config.commandPrefix.length).trim();
+  const remainder = commandText.trim();
   if (!remainder || remainder === "help") {
     await replyInChunks(
       message,
@@ -102,6 +106,13 @@ async function handleMessage(context, message) {
     return;
   }
 
+  const conversationScopeId = getConversationScopeId(message);
+  const recentConversation = await readRecentConversation(
+    context.config,
+    conversationScopeId,
+    context.config.chatHistoryLimit,
+  );
+
   const job = await createJob(context.config, {
     prompt: remainder,
     channelId: message.channelId,
@@ -112,6 +123,16 @@ async function handleMessage(context, message) {
     messageUrl: message.url,
     workspaceRoot: context.config.workspaceRoot,
     runnerMode: context.config.runnerMode,
+    conversationScopeId,
+    conversationTurns: recentConversation,
+  });
+
+  await appendConversationTurn(context.config, conversationScopeId, {
+    role: "user",
+    authorTag: message.author.tag,
+    content: remainder,
+    createdAt: new Date().toISOString(),
+    messageId: message.id,
   });
 
   await updateJob(context.config, job.id, { status: "running" });
@@ -122,6 +143,12 @@ async function handleMessage(context, message) {
   });
 
   await replyInChunks(message, result.reply);
+  await appendConversationTurn(context.config, conversationScopeId, {
+    role: "assistant",
+    authorTag: context.client.user?.tag || "codex",
+    content: result.reply,
+    createdAt: new Date().toISOString(),
+  });
 
   if (finalJob.status === "queued") {
     return;
@@ -138,9 +165,18 @@ async function handleMessage(context, message) {
  */
 function startOutboxPoller(context) {
   setInterval(async () => {
-    const pendingIds = await listPendingOutboxIds(context.config);
-    for (const jobId of pendingIds) {
-      await deliverOutboxReply(context, jobId);
+    try {
+      const pendingIds = await listPendingOutboxIds(context.config);
+      for (const jobId of pendingIds) {
+        try {
+          await deliverOutboxReply(context, jobId);
+        } catch (error) {
+          console.error(`Failed delivering outbox reply for ${jobId}:`, error);
+          await markOutboxJobFailed(context, jobId, error);
+        }
+      }
+    } catch (error) {
+      console.error("Outbox poller failed:", error);
     }
   }, context.config.outboxPollMs);
 }
@@ -156,6 +192,9 @@ function startOutboxPoller(context) {
  */
 async function deliverOutboxReply(context, jobId) {
   const job = await readJob(context.config, jobId);
+  if (!isSnowflake(job.source.channelId)) {
+    throw new Error(`Invalid Discord channel id for job ${jobId}: ${job.source.channelId}`);
+  }
   const channel = await context.client.channels.fetch(job.source.channelId);
   if (!channel || !channel.isTextBased()) {
     await updateJob(context.config, jobId, {
@@ -175,6 +214,41 @@ async function deliverOutboxReply(context, jobId) {
     status: "completed",
     resultSummary: reply.slice(0, 500),
   });
+}
+
+/**
+ * Extract one supported command body from either a prefix or a bot mention.
+ *
+ * Input:
+ *   context {object}: Bridge services and configuration.
+ *   message {import("discord.js").Message}: Discord message event.
+ * Output:
+ *   {string|null}: Command body without the prefix/mention, or null when
+ *   the message is not meant for the bot.
+ */
+function extractCommandText(context, message) {
+  const content = String(message.content || "").trim();
+  if (!content) {
+    return null;
+  }
+
+  if (content.startsWith(context.config.commandPrefix)) {
+    return content.slice(context.config.commandPrefix.length).trim();
+  }
+
+  const botId = context.client.user?.id;
+  if (!botId) {
+    return null;
+  }
+
+  const mentionForms = [`<@${botId}>`, `<@!${botId}>`];
+  for (const mention of mentionForms) {
+    if (content.startsWith(mention)) {
+      return content.slice(mention.length).trim();
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -234,6 +308,51 @@ function formatStatus(jobs) {
       ].join("\n"),
     )
     .join("\n");
+}
+
+/**
+ * Mark one outbox job as failed without killing the whole bot process.
+ *
+ * Input:
+ *   context {object}: Bridge services and configuration.
+ *   jobId {string}: Job identifier.
+ *   error {Error}: Delivery failure.
+ * Output:
+ *   {Promise<void>}
+ */
+async function markOutboxJobFailed(context, jobId, error) {
+  try {
+    await updateJob(context.config, jobId, {
+      status: "failed",
+      resultSummary: String(error.message || error).slice(0, 500),
+    });
+  } catch (updateError) {
+    console.error(`Failed updating job ${jobId} after outbox error:`, updateError);
+  }
+}
+
+/**
+ * Check whether one Discord id looks like a valid snowflake.
+ *
+ * Input:
+ *   value {string}: Candidate Discord id.
+ * Output:
+ *   {boolean}: True when the value is an integer snowflake string.
+ */
+function isSnowflake(value) {
+  return /^\d{16,20}$/u.test(String(value || ""));
+}
+
+/**
+ * Build one stable conversation scope for context persistence.
+ *
+ * Input:
+ *   message {import("discord.js").Message}: Discord message event.
+ * Output:
+ *   {string}: Thread id when available, otherwise channel id.
+ */
+function getConversationScopeId(message) {
+  return String(message.channel?.isThread?.() ? message.channel.id : message.channelId);
 }
 
 main().catch((error) => {

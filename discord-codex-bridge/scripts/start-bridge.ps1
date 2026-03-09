@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
+$setupScript = Join-Path $PSScriptRoot 'setup-codex-runtime.ps1'
 $logDir = Join-Path $projectRoot 'bridge-data\logs'
 $pidPath = Join-Path $logDir 'bridge.pid'
 $stdoutPath = Join-Path $logDir 'bridge.stdout.log'
@@ -18,6 +19,8 @@ if (Test-Path $pidPath) {
         }
     }
 }
+
+& $setupScript
 
 $process = Start-Process `
     -FilePath 'node.exe' `

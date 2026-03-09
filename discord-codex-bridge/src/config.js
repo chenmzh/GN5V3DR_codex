@@ -24,6 +24,7 @@ export function loadConfig(options = {}) {
     outboxDir: path.join(dataDir, "outbox"),
     archiveDir: path.join(dataDir, "archive"),
     jobsDir: path.join(dataDir, "jobs"),
+    conversationsDir: path.join(dataDir, "conversations"),
     discordToken: requireDiscordToken ? requireEnv("DISCORD_BOT_TOKEN") : (process.env.DISCORD_BOT_TOKEN || "").trim(),
     commandPrefix: process.env.DISCORD_COMMAND_PREFIX || "!codex",
     allowedChannelIds: splitCsv(process.env.DISCORD_ALLOWED_CHANNELS || ""),
@@ -32,6 +33,12 @@ export function loadConfig(options = {}) {
     openAiApiKey: process.env.OPENAI_API_KEY || "",
     openAiModel: process.env.OPENAI_MODEL || "",
     outboxPollMs: Number(process.env.OUTBOX_POLL_MS || 4000),
+    chatHistoryLimit: Number(process.env.CHAT_HISTORY_LIMIT || 12),
+    codexCliPath:
+      process.env.CODEX_CLI_PATH ||
+      path.join(rootDir, "vendor", "codex-runtime", "codex.exe"),
+    codexModel: process.env.CODEX_MODEL || "",
+    codexTimeoutMs: Number(process.env.CODEX_TIMEOUT_MS || 900000),
   };
 }
 

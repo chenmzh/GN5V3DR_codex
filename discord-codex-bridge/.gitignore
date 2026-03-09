@@ -1,5 +1,6 @@
 node_modules/
 .env
+vendor/codex-runtime/
 
 bridge-data/**
 !bridge-data/
@@ -8,4 +9,5 @@ bridge-data/**
 !bridge-data/archive/
 !bridge-data/jobs/
 !bridge-data/logs/
+!bridge-data/conversations/
 !bridge-data/**/.gitkeep

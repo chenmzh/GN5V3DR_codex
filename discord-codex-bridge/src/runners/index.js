@@ -1,3 +1,4 @@
+import { runCodexMode } from "./codex-runner.js";
 import { runQueueMode } from "./queue-runner.js";
 import { runOpenAiMode } from "./openai-runner.js";
 
@@ -12,6 +13,8 @@ import { runOpenAiMode } from "./openai-runner.js";
  */
 export async function runJob(context, job) {
   switch (context.config.runnerMode) {
+    case "codex":
+      return runCodexMode(context, job);
     case "queue":
       return runQueueMode(context, job);
     case "openai":
