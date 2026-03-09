@@ -4,6 +4,25 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $pidPath = Join-Path $projectRoot 'bridge-data\logs\bridge.pid'
 $childPidPath = Join-Path $projectRoot 'bridge-data\logs\bridge.child.pid'
 $stopFlagPath = Join-Path $projectRoot 'bridge-data\logs\bridge.stop'
+$supervisorScript = Join-Path $PSScriptRoot 'supervise-bridge.ps1'
+
+function Test-BridgeSupervisor {
+    param (
+        [string]$ProcessId,
+        [string]$ExpectedScript
+    )
+
+    if (-not $ProcessId) {
+        return $false
+    }
+
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
+    if (-not $process) {
+        return $false
+    }
+
+    return $process.CommandLine -like "*$ExpectedScript*"
+}
 
 New-Item -ItemType File -Path $stopFlagPath -Force | Out-Null
 
@@ -30,12 +49,11 @@ if (-not $processId) {
     exit 0
 }
 
-$process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-if ($process) {
+if (Test-BridgeSupervisor -ProcessId $processId -ExpectedScript $supervisorScript) {
     Stop-Process -Id $processId -Force
     Write-Output "Bridge supervisor stopped (PID $processId)."
 } else {
-    Write-Output "Bridge process $processId was not running."
+    Write-Output "Bridge supervisor PID $processId did not match the bridge process."
 }
 
 Remove-Item $pidPath -Force -ErrorAction SilentlyContinue

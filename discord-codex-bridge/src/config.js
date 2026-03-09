@@ -34,6 +34,10 @@ export function loadConfig(options = {}) {
     openAiModel: process.env.OPENAI_MODEL || "",
     outboxPollMs: Number(process.env.OUTBOX_POLL_MS || 4000),
     chatHistoryLimit: Number(process.env.CHAT_HISTORY_LIMIT || 12),
+    chatSummaryCharLimit: Number(process.env.CHAT_SUMMARY_CHAR_LIMIT || 1200),
+    chatTranscriptMaxTurns: Number(process.env.CHAT_TRANSCRIPT_MAX_TURNS || 24),
+    chatArchiveBatchSize: Number(process.env.CHAT_ARCHIVE_BATCH_SIZE || 6),
+    chatTurnCharLimit: Number(process.env.CHAT_TURN_CHAR_LIMIT || 4000),
     codexCliPath:
       process.env.CODEX_CLI_PATH ||
       path.join(rootDir, "vendor", "codex-runtime", "codex.exe"),

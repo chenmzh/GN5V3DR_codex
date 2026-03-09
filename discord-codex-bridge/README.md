@@ -9,7 +9,9 @@ Standalone Discord bridge for talking to local Codex from a Discord server.
 - Sends the request to local `codex exec`
 - Replies back in Discord with the Codex result
 - Stores recent conversation context per channel or thread
+- Rolls older context into a compact long-term summary
 - Keeps local job history on disk
+- Shows stage reactions and presence while the bot is working
 
 ## Project Layout
 
@@ -76,6 +78,16 @@ Help:
 !codex help
 ```
 
+## Discord Status Signals
+
+- `👀`: command received
+- `🧠`: loading or compacting conversation context
+- `🤔`: Codex is actively working
+- `✅`: request completed
+- `❌`: request failed
+
+The bot presence also changes between ready, loading context, and working.
+
 ## Runner Modes
 
 Default:
@@ -114,6 +126,10 @@ vendor/codex-runtime/
 - `RUNNER_MODE`
 - `WORKSPACE_ROOT`
 - `CHAT_HISTORY_LIMIT`
+- `CHAT_SUMMARY_CHAR_LIMIT`
+- `CHAT_TRANSCRIPT_MAX_TURNS`
+- `CHAT_ARCHIVE_BATCH_SIZE`
+- `CHAT_TURN_CHAR_LIMIT`
 - `CODEX_CLI_PATH`
 - `CODEX_MODEL`
 - `CODEX_TIMEOUT_MS`

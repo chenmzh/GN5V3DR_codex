@@ -9,7 +9,7 @@ import { loadConfig } from "./config.js";
 import { chunkText } from "./chunk-text.js";
 import {
   appendConversationTurn,
-  readRecentConversation,
+  readConversationContext,
 } from "./conversation-store.js";
 import {
   consumeOutboxReply,
@@ -22,9 +22,13 @@ import {
 } from "./job-store.js";
 import { runJob } from "./runners/index.js";
 
-const REACTION_THINKING = "🤔";
-const REACTION_SUCCESS = "✅";
-const REACTION_ERROR = "❌";
+const STAGE_REACTIONS = {
+  received: "👀",
+  context: "🧠",
+  thinking: "🤔",
+  success: "✅",
+  error: "❌",
+};
 
 /**
  * Start the Discord bridge bot and the outbox polling loop.
@@ -127,23 +131,33 @@ async function handleMessage(context, message) {
 
   if (remainder === "status") {
     const jobs = await listJobs(context.config, 5);
-    const statusText = formatStatus(jobs);
-    await replyInChunks(message, statusText);
+    await replyInChunks(message, formatStatus(jobs));
     return;
   }
 
-  await setMessageState(message, "thinking");
+  await setMessageState(message, "received");
   context.activeJobs += 1;
-  syncPresence(context, "thinking");
+  syncPresence(context, "context");
   const keepAlive = startThinkingHeartbeat(message);
 
   try {
     const conversationScopeId = getConversationScopeId(message);
-    const recentConversation = await readRecentConversation(
+
+    await setMessageState(message, "context");
+    const conversationContext = await readConversationContext(
       context.config,
       conversationScopeId,
       context.config.chatHistoryLimit,
+      context.config.chatSummaryCharLimit,
     );
+
+    await appendConversationTurn(context.config, conversationScopeId, {
+      role: "user",
+      authorTag: message.author.tag,
+      content: remainder,
+      createdAt: new Date().toISOString(),
+      messageId: message.id,
+    });
 
     const job = await createJob(context.config, {
       prompt: remainder,
@@ -156,18 +170,14 @@ async function handleMessage(context, message) {
       workspaceRoot: context.config.workspaceRoot,
       runnerMode: context.config.runnerMode,
       conversationScopeId,
-      conversationTurns: recentConversation,
-    });
-
-    await appendConversationTurn(context.config, conversationScopeId, {
-      role: "user",
-      authorTag: message.author.tag,
-      content: remainder,
-      createdAt: new Date().toISOString(),
-      messageId: message.id,
+      conversationSummary: conversationContext.summary,
+      conversationTurns: conversationContext.recentTurns,
     });
 
     await updateJob(context.config, job.id, { status: "running" });
+    await setMessageState(message, "thinking");
+    syncPresence(context, "thinking");
+
     const result = await runJob(context, job);
     const finalJob = await updateJob(context.config, job.id, {
       status: result.status,
@@ -353,34 +363,26 @@ async function safeSendTyping(message) {
 }
 
 /**
- * Reflect current processing state back onto the trigger message with
- * reactions.
+ * Reflect one processing stage back onto the trigger message with reactions.
  *
  * Input:
  *   message {import("discord.js").Message}: Trigger message.
- *   state {"thinking"|"success"|"error"}: Desired message state.
+ *   state {"received"|"context"|"thinking"|"success"|"error"}:
+ *   Desired message stage.
  * Output:
  *   {Promise<void>}
  */
 async function setMessageState(message, state) {
   try {
-    switch (state) {
-      case "thinking":
-        await ensureReaction(message, REACTION_THINKING);
-        await removeReaction(message, REACTION_SUCCESS);
-        await removeReaction(message, REACTION_ERROR);
-        break;
-      case "success":
-        await removeReaction(message, REACTION_THINKING);
-        await ensureReaction(message, REACTION_SUCCESS);
-        await removeReaction(message, REACTION_ERROR);
-        break;
-      case "error":
-        await removeReaction(message, REACTION_THINKING);
-        await ensureReaction(message, REACTION_ERROR);
-        break;
-      default:
-        break;
+    const desiredEmoji = STAGE_REACTIONS[state] || null;
+    const stageEmojis = Object.values(STAGE_REACTIONS);
+
+    for (const emoji of stageEmojis) {
+      if (emoji === desiredEmoji) {
+        await ensureReaction(message, emoji);
+      } else {
+        await removeReaction(message, emoji);
+      }
     }
   } catch (error) {
     console.warn("Failed updating message reactions:", error.message);
@@ -561,7 +563,7 @@ function getBotRoleMentions(message) {
  *
  * Input:
  *   context {object}: Bridge services, client, and job counters.
- *   state {"ready"|"thinking"}: Desired bridge presence.
+ *   state {"ready"|"context"|"thinking"}: Desired bridge presence.
  * Output:
  *   {void}
  */
@@ -571,11 +573,16 @@ function syncPresence(context, state) {
     return;
   }
 
-  const activityName =
-    state === "thinking"
-      ? `🤔 Working on ${context.activeJobs} task(s)`
-      : "🟢 Ready for @codex";
-  const presenceStatus = state === "thinking" ? "idle" : "online";
+  let activityName = "🟢 Ready for @codex";
+  let presenceStatus = "online";
+
+  if (state === "context") {
+    activityName = `🧠 Loading context for ${context.activeJobs} task(s)`;
+    presenceStatus = "idle";
+  } else if (state === "thinking") {
+    activityName = `🤔 Working on ${context.activeJobs} task(s)`;
+    presenceStatus = "idle";
+  }
 
   user.setPresence({
     status: presenceStatus,

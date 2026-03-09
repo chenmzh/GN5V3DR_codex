@@ -47,6 +47,11 @@ export async function createJob(config, payload) {
     },
     workspaceRoot: payload.workspaceRoot,
     runnerMode: payload.runnerMode,
+    conversationScopeId: payload.conversationScopeId || "",
+    conversationSummary: String(payload.conversationSummary || ""),
+    conversationTurns: Array.isArray(payload.conversationTurns)
+      ? payload.conversationTurns
+      : [],
     resultSummary: "",
   };
 
@@ -217,6 +222,16 @@ async function writeJob(config, job) {
  */
 async function writeInboxPrompt(config, job) {
   const filePath = path.join(config.inboxDir, `${job.id}.md`);
+  const recentConversation = (job.conversationTurns || [])
+    .map(
+      (turn) =>
+        `- [${turn.role || "user"}] ${turn.authorTag || "unknown"}: ${String(
+          turn.content || "",
+        )
+          .replace(/\s+/g, " ")
+          .trim()}`,
+    )
+    .join("\n");
   const content = [
     `# Job ${job.id}`,
     "",
@@ -226,7 +241,18 @@ async function writeInboxPrompt(config, job) {
     `- Workspace: ${job.workspaceRoot}`,
     `- Discord Author: ${job.source.authorTag}`,
     `- Discord Message: ${job.source.messageUrl}`,
+    job.conversationScopeId
+      ? `- Conversation Scope: ${job.conversationScopeId}`
+      : null,
     "",
+    job.conversationSummary ? "## Older Conversation Summary" : null,
+    job.conversationSummary ? "" : null,
+    job.conversationSummary || null,
+    job.conversationSummary ? "" : null,
+    recentConversation ? "## Recent Conversation" : null,
+    recentConversation ? "" : null,
+    recentConversation || null,
+    recentConversation ? "" : null,
     "## Prompt",
     "",
     job.prompt,
@@ -234,7 +260,9 @@ async function writeInboxPrompt(config, job) {
     "## Reply",
     "",
     `Write the final reply to bridge-data/outbox/${job.id}.md`,
-  ].join("\n");
+  ]
+    .filter((line) => line !== null)
+    .join("\n");
 
   await fs.writeFile(filePath, content, "utf8");
 }

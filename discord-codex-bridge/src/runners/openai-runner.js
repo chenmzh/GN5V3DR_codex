@@ -18,6 +18,7 @@ export async function runOpenAiMode(context, job) {
   }
 
   const client = new OpenAI({ apiKey: context.config.openAiApiKey });
+  const summary = String(job.conversationSummary || "").trim();
   const recentTurns = job.conversationTurns || [];
   const response = await client.responses.create({
     model: context.config.openAiModel,
@@ -33,6 +34,9 @@ export async function runOpenAiMode(context, job) {
               "You are speaking in an ongoing Discord conversation.",
               "Answer clearly and concisely.",
               "Do not claim that you changed files unless you actually had a local execution layer.",
+              summary
+                ? `Older conversation summary: ${summary}`
+                : "Older conversation summary: none.",
             ].join(" "),
           },
         ],

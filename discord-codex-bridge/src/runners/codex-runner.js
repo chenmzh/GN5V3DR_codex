@@ -63,8 +63,12 @@ export async function runCodexMode(context, job) {
  *   {string}: Full natural-language Codex prompt.
  */
 function buildCodexPrompt(job) {
+  const summary = String(job.conversationSummary || "").trim();
   const history = (job.conversationTurns || [])
-    .map((turn) => `[${turn.role}] ${turn.authorTag || "unknown"}: ${turn.content}`)
+    .map(
+      (turn) =>
+        `[${turn.role}] ${turn.authorTag || "unknown"}: ${turn.content}`,
+    )
     .join("\n");
 
   return [
@@ -73,6 +77,10 @@ function buildCodexPrompt(job) {
     "Continue the conversation naturally and helpfully.",
     "If the user asks for coding work, you may inspect or edit files in the workspace and report what you actually did.",
     "Do not claim to have done work you did not do.",
+    "The older summary is a compressed memory of earlier turns. Treat it as background context, not as a verbatim transcript.",
+    summary
+      ? "Older conversation summary:\n" + summary
+      : "Older conversation summary: (none)",
     history ? "Recent conversation:\n" + history : "Recent conversation: (none)",
     `Latest user request:\n${job.prompt}`,
     "Reply in Chinese unless the user clearly asked for another language.",

@@ -5,17 +5,34 @@ $logDir = Join-Path $projectRoot 'bridge-data\logs'
 $supervisorPidPath = Join-Path $logDir 'bridge.pid'
 $supervisorScript = Join-Path $PSScriptRoot 'supervise-bridge.ps1'
 
+function Test-BridgeSupervisor {
+    param (
+        [string]$ProcessId,
+        [string]$ExpectedScript
+    )
+
+    if (-not $ProcessId) {
+        return $false
+    }
+
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
+    if (-not $process) {
+        return $false
+    }
+
+    return $process.CommandLine -like "*$ExpectedScript*"
+}
+
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 
 if (Test-Path $supervisorPidPath) {
     $existingPid = Get-Content $supervisorPidPath -ErrorAction SilentlyContinue
-    if ($existingPid) {
-        $running = Get-Process -Id $existingPid -ErrorAction SilentlyContinue
-        if ($running) {
-            Write-Output "Bridge supervisor is already running with PID $existingPid."
-            exit 0
-        }
+    if (Test-BridgeSupervisor -ProcessId $existingPid -ExpectedScript $supervisorScript) {
+        Write-Output "Bridge supervisor is already running with PID $existingPid."
+        exit 0
     }
+
+    Remove-Item $supervisorPidPath -Force -ErrorAction SilentlyContinue
 }
 
 $supervisor = Start-Process `
