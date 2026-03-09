@@ -243,8 +243,21 @@ function extractCommandText(context, message) {
 
   const mentionForms = [`<@${botId}>`, `<@!${botId}>`];
   for (const mention of mentionForms) {
-    if (content.startsWith(mention)) {
-      return content.slice(mention.length).trim();
+    if (content.includes(mention)) {
+      return content
+        .replace(mention, " ")
+        .replace(/\s+/gu, " ")
+        .trim();
+    }
+  }
+
+  const botRoleMentions = getBotRoleMentions(context, message);
+  for (const mention of botRoleMentions) {
+    if (content.includes(mention)) {
+      return content
+        .replace(mention, " ")
+        .replace(/\s+/gu, " ")
+        .trim();
     }
   }
 
@@ -353,6 +366,24 @@ function isSnowflake(value) {
  */
 function getConversationScopeId(message) {
   return String(message.channel?.isThread?.() ? message.channel.id : message.channelId);
+}
+
+/**
+ * Build all role-mention strings that belong to the bot in this guild.
+ *
+ * Input:
+ *   context {object}: Bridge services and configuration.
+ *   message {import("discord.js").Message}: Discord message event.
+ * Output:
+ *   {string[]}: Role mention strings such as <@&123>.
+ */
+function getBotRoleMentions(context, message) {
+  const roleIds = message.guild?.members?.me?.roles?.cache?.keys?.();
+  if (!roleIds) {
+    return [];
+  }
+
+  return [...roleIds].map((roleId) => `<@&${roleId}>`);
 }
 
 main().catch((error) => {
