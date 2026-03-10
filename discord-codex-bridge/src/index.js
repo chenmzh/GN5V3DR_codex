@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import {
   ActivityType,
   AttachmentBuilder,
@@ -144,6 +145,11 @@ async function handleMessage(context, message) {
 
   if (remainder === "status") {
     await replyInChunks(message, formatStatus(await listJobs(context.config, 5)));
+    return;
+  }
+
+  if (remainder === "重启") {
+    await restartBridgeProcess(context, message);
     return;
   }
 
@@ -1064,6 +1070,42 @@ async function sendDirectMessageToAuthor(context, message, content) {
       `无法发送私信。请确认你允许此服务器成员私信：${error.message}`,
     );
   }
+}
+
+/**
+ * Restart the bridge child process through the local restart script.
+ *
+ * Input:
+ *   context {object}: Bridge services and configuration.
+ *   message {import("discord.js").Message}: Trigger Discord message.
+ * Output:
+ *   {Promise<void>}
+ */
+async function restartBridgeProcess(context, message) {
+  const restartScriptPath = path.join(
+    context.config.rootDir,
+    "scripts",
+    "restart-bridge.ps1",
+  );
+
+  await replyInChunks(message, "正在重启 bot。");
+
+  const restartProcess = spawn(
+    "powershell.exe",
+    [
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      restartScriptPath,
+    ],
+    {
+      cwd: context.config.rootDir,
+      detached: true,
+      stdio: "ignore",
+    },
+  );
+
+  restartProcess.unref();
 }
 
 /**

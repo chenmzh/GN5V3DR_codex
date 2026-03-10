@@ -82,6 +82,12 @@ Status:
 !codex status
 ```
 
+Restart the bot:
+
+```text
+!codex 重启
+```
+
 Direct message yourself:
 
 ```text
