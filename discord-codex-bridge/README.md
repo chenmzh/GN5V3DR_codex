@@ -12,7 +12,7 @@ Standalone Discord bridge for talking to local Codex from a Discord server.
 - Can send you a direct message with `!codex dm <content>` or `!codex 私信 <content>`
 - Sends the request to local `codex exec`
 - Replies back in Discord with the Codex result
-- Can upload local image files to Discord when a reply includes a
+- Can upload local files to Discord when a reply includes a
   `discord-attachments` code block
 - Stores short-term working context per channel or thread
 - Rolls older conversation into a compact long-term summary
@@ -104,23 +104,23 @@ Help:
 !codex help
 ```
 
-## Sending Images
+## Sending Files
 
-If Codex or a manual outbox reply needs to upload a local image, append a code
+If Codex or a manual outbox reply needs to upload a local file, append a code
 block like this to the reply:
 
 ````text
 ```discord-attachments
-relative/or/absolute/path/to/image.png
-another/output/chart.jpg
+relative/or/absolute/path/to/file.png
+another/output/report.pdf
 ```
 ````
 
 Rules:
 
-- One image path per line
+- One file path per line
 - Relative paths are resolved from the active workspace
-- Only existing local image files are uploaded
+- Only existing local regular files are uploaded
 
 ## Memory Layers
 

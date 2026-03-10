@@ -33,16 +33,6 @@ import { runJob } from "./runners/index.js";
 const DISCORD_ATTACHMENTS_BLOCK_PATTERN =
   /```discord-attachments\s*\r?\n([\s\S]*?)```/giu;
 const DISCORD_MAX_FILES_PER_MESSAGE = 10;
-const IMAGE_FILE_EXTENSIONS = new Set([
-  ".png",
-  ".jpg",
-  ".jpeg",
-  ".gif",
-  ".webp",
-  ".bmp",
-  ".tif",
-  ".tiff",
-]);
 
 const STAGE_REACTIONS = {
   received: "👀",
@@ -744,7 +734,7 @@ async function removeReaction(message, emoji) {
  * Input:
  *   message {import("discord.js").Message}: Discord message to reply to.
  *   text {string}: Long reply text.
- *   attachments {AttachmentBuilder[]}: Image files to upload.
+ *   attachments {AttachmentBuilder[]}: Files to upload.
  * Output:
  *   {Promise<void>}
  */
@@ -758,12 +748,12 @@ async function replyInChunks(message, text, attachments = []) {
 }
 
 /**
- * Send one channel message with safe text chunking and optional image files.
+ * Send one channel message with safe text chunking and optional file uploads.
  *
  * Input:
  *   channel {import("discord.js").TextBasedChannel}: Discord channel target.
  *   text {string}: Long reply text.
- *   attachments {AttachmentBuilder[]}: Image files to upload.
+ *   attachments {AttachmentBuilder[]}: Files to upload.
  * Output:
  *   {Promise<void>}
  */
@@ -783,7 +773,7 @@ async function sendChannelInChunks(channel, text, attachments = []) {
  *   sendFirst {(payload: object) => Promise<unknown>}: First-message sender.
  *   sendNext {(payload: object) => Promise<unknown>}: Follow-up sender.
  *   text {string}: Visible reply text.
- *   attachments {AttachmentBuilder[]}: Image files to upload.
+ *   attachments {AttachmentBuilder[]}: Files to upload.
  * Output:
  *   {Promise<void>}
  */
@@ -828,7 +818,7 @@ async function sendChunkedDiscordPayload(
 }
 
 /**
- * Parse one assistant reply into visible text plus existing local image files.
+ * Parse one assistant reply into visible text plus existing local files.
  *
  * Input:
  *   workspaceRoot {string}: Base directory for relative attachment paths.
@@ -849,12 +839,6 @@ async function buildDiscordReplyPayload(workspaceRoot, rawText) {
     }
     seenPaths.add(resolvedPath);
 
-    const extension = path.extname(resolvedPath).toLowerCase();
-    if (!IMAGE_FILE_EXTENSIONS.has(extension)) {
-      warnings.push(`'${rawPath}' is not a supported image file.`);
-      continue;
-    }
-
     try {
       const stats = await fs.stat(resolvedPath);
       if (!stats.isFile()) {
@@ -873,7 +857,7 @@ async function buildDiscordReplyPayload(workspaceRoot, rawText) {
 
   const warningText =
     warnings.length > 0
-      ? ["Failed image attachments:", ...warnings.map((item) => `- ${item}`)].join(
+      ? ["Failed file attachments:", ...warnings.map((item) => `- ${item}`)].join(
           "\n",
         )
       : "";
@@ -887,7 +871,7 @@ async function buildDiscordReplyPayload(workspaceRoot, rawText) {
 }
 
 /**
- * Remove attachment code blocks and collect one image path per non-empty line.
+ * Remove attachment code blocks and collect one file path per non-empty line.
  *
  * Input:
  *   rawText {string}: Assistant reply before Discord post-processing.
@@ -976,7 +960,7 @@ function chunkAttachments(attachments) {
 }
 
 /**
- * Build one compact stored transcript line for assistant replies with images.
+ * Build one compact stored transcript line for assistant replies with files.
  *
  * Input:
  *   replyPayload {object}: Visible text plus attachment metadata.
@@ -986,7 +970,7 @@ function chunkAttachments(attachments) {
 function formatStoredAssistantReply(replyPayload) {
   const normalizedText = String(replyPayload?.text || "").trim();
   if (replyPayload?.attachmentCount > 0) {
-    const attachmentTag = `\n\n[Attached ${replyPayload.attachmentCount} image file(s)]`;
+    const attachmentTag = `\n\n[Attached ${replyPayload.attachmentCount} file(s)]`;
     return normalizedText ? `${normalizedText}${attachmentTag}` : attachmentTag.trim();
   }
   return normalizedText || "(empty response)";
