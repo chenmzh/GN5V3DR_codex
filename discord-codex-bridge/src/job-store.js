@@ -313,6 +313,10 @@ async function writeInboxPrompt(config, job) {
     "## Reply",
     "",
     `Write the final reply to bridge-data/outbox/${job.id}.md`,
+    "If you need Discord to upload local image files, append a fenced code block like:",
+    "```discord-attachments",
+    "relative/or/absolute/path/to/image.png",
+    "```",
   ]
     .filter((line) => line !== null)
     .join("\n");

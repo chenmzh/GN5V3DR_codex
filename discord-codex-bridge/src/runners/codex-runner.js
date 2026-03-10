@@ -85,6 +85,8 @@ function buildCodexPrompt(job, config) {
     "Continue the conversation naturally and helpfully.",
     "If the user asks for coding work, you may inspect or edit files in the workspace and report what you actually did.",
     "Do not claim to have done work you did not do.",
+    "If you want Discord to upload a local image file, append a fenced code block with the info string discord-attachments and put one existing image path per line inside it.",
+    "Keep normal user-facing text outside that code block, and only list files that already exist on disk.",
     "The older summary is a compressed memory of earlier turns. Treat it as background context, not as a verbatim transcript.",
     `Dynamic memory profile: ${promptContext.profile}.`,
     `Dynamic memory budget: about ${promptContext.budget} chars.`,

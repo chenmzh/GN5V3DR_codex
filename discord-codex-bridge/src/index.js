@@ -1,5 +1,8 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import {
   ActivityType,
+  AttachmentBuilder,
   Client,
   Events,
   GatewayIntentBits,
@@ -26,6 +29,20 @@ import {
   updateJob,
 } from "./job-store.js";
 import { runJob } from "./runners/index.js";
+
+const DISCORD_ATTACHMENTS_BLOCK_PATTERN =
+  /```discord-attachments\s*\r?\n([\s\S]*?)```/giu;
+const DISCORD_MAX_FILES_PER_MESSAGE = 10;
+const IMAGE_FILE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".bmp",
+  ".tif",
+  ".tiff",
+]);
 
 const STAGE_REACTIONS = {
   received: "👀",
@@ -210,23 +227,27 @@ async function handleMessage(context, message) {
     syncPresence(context, "thinking");
 
     const result = await runJob(context, job);
+    const replyPayload = await buildDiscordReplyPayload(
+      job.workspaceRoot,
+      result.reply,
+    );
     const finalJob = await updateJob(context.config, job.id, {
       status: result.status,
-      resultSummary: result.reply.slice(0, 500),
+      resultSummary: summarizeDiscordReply(replyPayload),
     });
 
-    await replyInChunks(message, result.reply);
+    await replyInChunks(message, replyPayload.text, replyPayload.attachments);
     await appendConversationTurn(context.config, conversationScopeId, {
       role: "assistant",
       authorTag: context.client.user?.tag || "codex",
-      content: result.reply,
+      content: formatStoredAssistantReply(replyPayload),
       createdAt: new Date().toISOString(),
     });
 
     await rememberCompletedTask(context.config, {
       scopeId: conversationScopeId,
       prompt: remainder,
-      resultSummary: result.reply.slice(0, 500),
+      resultSummary: summarizeDiscordReply(replyPayload),
       createdAt: new Date().toISOString(),
       authorTag: message.author.tag,
     });
@@ -298,14 +319,14 @@ async function deliverOutboxReply(context, jobId) {
   }
 
   const reply = await consumeOutboxReply(context.config, jobId);
-  const payload = `任务 ${jobId} 已完成。\n\n${reply}`;
-  for (const chunk of chunkText(payload)) {
-    await channel.send(chunk);
-  }
-
+  const replyPayload = await buildDiscordReplyPayload(job.workspaceRoot, reply);
+  const deliveredText = [`Task ${jobId} completed.`, replyPayload.text]
+    .filter(Boolean)
+    .join("\n\n");
+  await sendChannelInChunks(channel, deliveredText, replyPayload.attachments);
   await updateJob(context.config, jobId, {
     status: "completed",
-    resultSummary: reply.slice(0, 500),
+    resultSummary: summarizeDiscordReply(replyPayload),
   });
 }
 
@@ -723,18 +744,270 @@ async function removeReaction(message, emoji) {
  * Input:
  *   message {import("discord.js").Message}: Discord message to reply to.
  *   text {string}: Long reply text.
+ *   attachments {AttachmentBuilder[]}: Image files to upload.
  * Output:
  *   {Promise<void>}
  */
-async function replyInChunks(message, text) {
-  const chunks = chunkText(text);
-  for (let index = 0; index < chunks.length; index += 1) {
-    if (index === 0) {
-      await message.reply(chunks[index]);
-    } else {
-      await message.channel.send(chunks[index]);
+async function replyInChunks(message, text, attachments = []) {
+  await sendChunkedDiscordPayload(
+    (payload) => message.reply(payload),
+    (payload) => message.channel.send(payload),
+    text,
+    attachments,
+  );
+}
+
+/**
+ * Send one channel message with safe text chunking and optional image files.
+ *
+ * Input:
+ *   channel {import("discord.js").TextBasedChannel}: Discord channel target.
+ *   text {string}: Long reply text.
+ *   attachments {AttachmentBuilder[]}: Image files to upload.
+ * Output:
+ *   {Promise<void>}
+ */
+async function sendChannelInChunks(channel, text, attachments = []) {
+  await sendChunkedDiscordPayload(
+    (payload) => channel.send(payload),
+    (payload) => channel.send(payload),
+    text,
+    attachments,
+  );
+}
+
+/**
+ * Send one Discord reply stream with text chunking and attachment batching.
+ *
+ * Input:
+ *   sendFirst {(payload: object) => Promise<unknown>}: First-message sender.
+ *   sendNext {(payload: object) => Promise<unknown>}: Follow-up sender.
+ *   text {string}: Visible reply text.
+ *   attachments {AttachmentBuilder[]}: Image files to upload.
+ * Output:
+ *   {Promise<void>}
+ */
+async function sendChunkedDiscordPayload(
+  sendFirst,
+  sendNext,
+  text,
+  attachments = [],
+) {
+  const normalizedText = String(text || "").trim();
+  const chunks = normalizedText
+    ? chunkText(normalizedText)
+    : attachments.length > 0
+      ? []
+      : ["(empty response)"];
+  const attachmentGroups = chunkAttachments(attachments);
+  const firstPayload = {};
+
+  if (chunks.length > 0) {
+    firstPayload.content = chunks[0];
+  }
+  if (attachmentGroups.length > 0) {
+    firstPayload.files = attachmentGroups[0];
+  }
+  if (Object.keys(firstPayload).length === 0) {
+    firstPayload.content = "(empty response)";
+  }
+
+  await sendFirst(firstPayload);
+
+  for (let index = 1; index < chunks.length; index += 1) {
+    await sendNext({ content: chunks[index] });
+  }
+
+  for (
+    let groupIndex = attachmentGroups.length > 0 ? 1 : 0;
+    groupIndex < attachmentGroups.length;
+    groupIndex += 1
+  ) {
+    await sendNext({ files: attachmentGroups[groupIndex] });
+  }
+}
+
+/**
+ * Parse one assistant reply into visible text plus existing local image files.
+ *
+ * Input:
+ *   workspaceRoot {string}: Base directory for relative attachment paths.
+ *   rawText {string}: Raw assistant reply or outbox markdown content.
+ * Output:
+ *   {Promise<object>}: Clean text plus validated Discord attachments.
+ */
+async function buildDiscordReplyPayload(workspaceRoot, rawText) {
+  const parsedReply = parseDiscordAttachmentBlocks(rawText);
+  const warnings = [];
+  const attachments = [];
+  const seenPaths = new Set();
+
+  for (const rawPath of parsedReply.attachmentPaths) {
+    const resolvedPath = resolveAttachmentPath(workspaceRoot, rawPath);
+    if (!resolvedPath || seenPaths.has(resolvedPath)) {
+      continue;
+    }
+    seenPaths.add(resolvedPath);
+
+    const extension = path.extname(resolvedPath).toLowerCase();
+    if (!IMAGE_FILE_EXTENSIONS.has(extension)) {
+      warnings.push(`'${rawPath}' is not a supported image file.`);
+      continue;
+    }
+
+    try {
+      const stats = await fs.stat(resolvedPath);
+      if (!stats.isFile()) {
+        warnings.push(`'${rawPath}' is not a regular file.`);
+        continue;
+      }
+      attachments.push(
+        new AttachmentBuilder(resolvedPath, {
+          name: path.basename(resolvedPath),
+        }),
+      );
+    } catch (error) {
+      warnings.push(`'${rawPath}' could not be read (${error.message}).`);
     }
   }
+
+  const warningText =
+    warnings.length > 0
+      ? ["Failed image attachments:", ...warnings.map((item) => `- ${item}`)].join(
+          "\n",
+        )
+      : "";
+  const text = [parsedReply.text, warningText].filter(Boolean).join("\n\n").trim();
+
+  return {
+    text,
+    attachments,
+    attachmentCount: attachments.length,
+  };
+}
+
+/**
+ * Remove attachment code blocks and collect one image path per non-empty line.
+ *
+ * Input:
+ *   rawText {string}: Assistant reply before Discord post-processing.
+ * Output:
+ *   {object}: Visible text and raw attachment path list.
+ */
+function parseDiscordAttachmentBlocks(rawText) {
+  const attachmentPaths = [];
+  const strippedText = String(rawText || "").replace(
+    DISCORD_ATTACHMENTS_BLOCK_PATTERN,
+    (_, blockContent) => {
+      const lines = String(blockContent || "")
+        .split(/\r?\n/u)
+        .map((line) => stripQuotedPath(line.trim()))
+        .filter((line) => line && !line.startsWith("#"));
+      attachmentPaths.push(...lines);
+      return "";
+    },
+  );
+
+  return {
+    text: strippedText.replace(/\n{3,}/gu, "\n\n").trim(),
+    attachmentPaths,
+  };
+}
+
+/**
+ * Normalize one raw path line by removing matching wrapping quotes.
+ *
+ * Input:
+ *   rawPath {string}: Attachment path line from the reply block.
+ * Output:
+ *   {string}: Clean path string.
+ */
+function stripQuotedPath(rawPath) {
+  const normalized = String(rawPath || "").trim();
+  if (
+    normalized.length >= 2 &&
+    ((normalized.startsWith("\"") && normalized.endsWith("\"")) ||
+      (normalized.startsWith("'") && normalized.endsWith("'")))
+  ) {
+    return normalized.slice(1, -1).trim();
+  }
+  return normalized;
+}
+
+/**
+ * Resolve one attachment path against the job workspace when needed.
+ *
+ * Input:
+ *   workspaceRoot {string}: Job workspace root.
+ *   rawPath {string}: Absolute or relative path string.
+ * Output:
+ *   {string}: Absolute normalized file path.
+ */
+function resolveAttachmentPath(workspaceRoot, rawPath) {
+  const normalized = stripQuotedPath(rawPath);
+  if (!normalized) {
+    return "";
+  }
+  return path.normalize(
+    path.isAbsolute(normalized)
+      ? normalized
+      : path.resolve(workspaceRoot || process.cwd(), normalized),
+  );
+}
+
+/**
+ * Split one attachment list into Discord-safe message batches.
+ *
+ * Input:
+ *   attachments {AttachmentBuilder[]}: Files to upload.
+ * Output:
+ *   {AttachmentBuilder[][]}: Ordered file groups with at most 10 items each.
+ */
+function chunkAttachments(attachments) {
+  const groups = [];
+  for (
+    let index = 0;
+    index < attachments.length;
+    index += DISCORD_MAX_FILES_PER_MESSAGE
+  ) {
+    groups.push(attachments.slice(index, index + DISCORD_MAX_FILES_PER_MESSAGE));
+  }
+  return groups;
+}
+
+/**
+ * Build one compact stored transcript line for assistant replies with images.
+ *
+ * Input:
+ *   replyPayload {object}: Visible text plus attachment metadata.
+ * Output:
+ *   {string}: Conversation-store safe assistant content.
+ */
+function formatStoredAssistantReply(replyPayload) {
+  const normalizedText = String(replyPayload?.text || "").trim();
+  if (replyPayload?.attachmentCount > 0) {
+    const attachmentTag = `\n\n[Attached ${replyPayload.attachmentCount} image file(s)]`;
+    return normalizedText ? `${normalizedText}${attachmentTag}` : attachmentTag.trim();
+  }
+  return normalizedText || "(empty response)";
+}
+
+/**
+ * Build one short job summary string from the visible Discord reply payload.
+ *
+ * Input:
+ *   replyPayload {object}: Visible text plus attachment metadata.
+ * Output:
+ *   {string}: Bounded summary for job storage and memory.
+ */
+function summarizeDiscordReply(replyPayload) {
+  const summaryText = String(replyPayload?.text || "").trim();
+  const attachmentNote =
+    replyPayload?.attachmentCount > 0
+      ? ` [attachments: ${replyPayload.attachmentCount}]`
+      : "";
+  const combined = `${summaryText || "(attachment-only reply)"}${attachmentNote}`;
+  return combined.slice(0, 500);
 }
 
 /**
